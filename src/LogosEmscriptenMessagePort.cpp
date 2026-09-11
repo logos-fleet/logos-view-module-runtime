@@ -100,7 +100,9 @@ void LogosEmscriptenMessagePort::close()
     if (!m_open)
         return;
     m_open = false;
-    if (m_port.hasOwnProperty("close") || !m_port["close"].isUndefined())
+    // A MessagePort has close(); a Worker and the page's global, which this
+    // wrapper also accepts, do not.
+    if (!m_port["close"].isUndefined())
         m_port.call<void>("close");
     emit closed();
 }

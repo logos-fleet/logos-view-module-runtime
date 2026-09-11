@@ -69,9 +69,20 @@
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.logos-protocol.follows = "logos-protocol";
     };
+    # FOR THE WASM SMOKE ONLY, and only for its `packages.<sys>.wasm`. ADR 0004's
+    # QML runtime is Qt Quick plus the Logos design system plus this repo's
+    # MessagePort transport in ONE static wasm image, and the parts of that
+    # sentence that can collide do so at link time: under a static Qt, Qt's own
+    # plugin auto-import and the design system's WHOLE_ARCHIVE umbrella both
+    # claim the same QML plugins. Nothing in the desktop build takes this input.
+    logos-design-system = {
+      url = "github:logos-co/logos-design-system";
+      inputs.logos-nix.follows = "logos-nix";
+    };
   };
 
-  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt }:
+  outputs = { self, nixpkgs, logos-nix, logos-cpp-sdk, logos-protocol, logos-plugin-qt
+            , logos-design-system }:
     let
       # Adds the "x86_64-windows" pseudo-system. A cross derivation's `system`
       # attr is its BUILD platform, so these evaluate anywhere and realise on
@@ -96,6 +107,7 @@
           inherit pkgs;
           inherit (nixpkgs) lib;
           qtWasm = logos-nix.lib.qtWasmFor system;
+          designSystemWasm = logos-design-system.packages.${system}.wasm;
         };
       });
 

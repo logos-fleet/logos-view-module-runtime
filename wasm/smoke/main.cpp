@@ -1,6 +1,7 @@
-// The Web container's QML runtime, reduced to the two things this build has to
-// prove: that a Qt Quick image can link the MessagePort transport at all, and
-// that the emscripten port's JS glue survives the link.
+// The Web container's QML runtime, reduced to what this build has to prove:
+// that Qt Quick, the Logos design system and the MessagePort transport link
+// into ONE static wasm image, that the design system's QML types survive that
+// link, and that the emscripten port's JS glue survives it too.
 //
 // Nothing here runs during the build — a Qt-wasm image needs a canvas and a
 // page to hand it a port — so what the derivation around this checks is the

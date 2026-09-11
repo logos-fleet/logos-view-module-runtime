@@ -16,7 +16,7 @@
 # emscripten, that the JS glue is well-formed (emscripten compiles an EM_JS body
 # into the image's JS library, so a syntax error fails this link), and that both
 # halves of the page-facing API survive into the image.
-{ pkgs, lib, qtWasm }:
+{ pkgs, lib, qtWasm, designSystemWasm }:
 
 pkgs.stdenv.mkDerivation {
   pname = "logos-messageport-wasm";
@@ -49,9 +49,17 @@ pkgs.stdenv.mkDerivation {
 
     # Against the INSTALLED prefix, not the source tree: a header the install
     # forgot is a failure a consumer would otherwise be the first to find.
+    #
+    # The last two -D lines RESTATE the search paths qtWasm.cmakeFlags already
+    # sets (a repeated -D wins), because this consumer needs the design system's
+    # prefix alongside Qt's. Both variables, not just CMAKE_PREFIX_PATH: the
+    # Emscripten toolchain sets CMAKE_FIND_ROOT_PATH_MODE_PACKAGE to ONLY, so a
+    # prefix named only in CMAKE_PREFIX_PATH is never searched.
     cmake -S wasm/smoke -B build-smoke -GNinja ${lib.escapeShellArgs qtWasm.cmakeFlags} \
       -DCMAKE_BUILD_TYPE=Release \
-      -DLOGOS_MESSAGEPORT_ROOT=$PWD/prefix
+      -DLOGOS_MESSAGEPORT_ROOT=$PWD/prefix \
+      -DCMAKE_PREFIX_PATH="${qtWasm.prefix};${designSystemWasm}" \
+      -DCMAKE_FIND_ROOT_PATH="${qtWasm.prefix};${designSystemWasm}"
     cmake --build build-smoke --parallel $NIX_BUILD_CORES
 
     runHook postBuild
@@ -84,6 +92,22 @@ pkgs.stdenv.mkDerivation {
       }
     done
 
+    # AND THE LOGOS TYPES ARE STILL IN IT. `Logos_<Mod>Plugin` is the RTTI name
+    # of each design-system module's QQmlEngineExtensionPlugin, read as bytes
+    # because a Release wasm link runs wasm-opt and leaves almost no symbol
+    # table (logos-design-system' own smoke explains this at length). The claim
+    # here is narrower and is the one this repo owns: adding the MessagePort
+    # transport to the link did not cost the runtime its design system —
+    # under a STATIC Qt the two compete for the same QML plugins, and the loser
+    # is silent.
+    for mod in Theme Icons Controls; do
+      grep -a -q "Logos_''${mod}Plugin" "$image" || {
+        echo "the image carries no Logos_''${mod}Plugin: the design system's" >&2
+        echo "  static QML plugin was dropped from the runtime's link." >&2
+        exit 1
+      }
+    done
+
     mkdir -p $out/www
     cp build-smoke/logos_messageport_wasm_smoke.wasm \
        build-smoke/logos_messageport_wasm_smoke.js \
@@ -92,7 +116,8 @@ pkgs.stdenv.mkDerivation {
 
     raw=$(wc -c < "$image")
     echo "logos-messageport-wasm: Qt ${qtWasm.version}, emsdk ${pkgs.logosEmscriptenVersion}"
-    echo "  smoke image raw $raw B"
+    echo "  runtime-shape image (Qt Quick + Logos design system + MessagePort QtRO)"
+    echo "  raw $raw B"
 
     runHook postInstall
   '';

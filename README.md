@@ -174,10 +174,20 @@ Module.logosAdoptMessagePort('backend', channel.port1);
 
 The transport's behaviour is checked on the **desktop**, against a real
 `QRemoteObjectHost` over a loopback port pair with the same four properties a
-MessagePort has (`tests/test_messageport_transport.cpp`). What a desktop test
-cannot reach — that the emscripten port compiles, that its JS glue is
-well-formed, and that both halves of the page-facing API survive the link into
-a Qt Quick image — is `nix build .#messageport-wasm`.
+MessagePort has (`tests/test_messageport_transport.cpp`).
+
+What a desktop test cannot reach is `nix build .#messageport-wasm`: the
+transport compiled for wasm32-emscripten against logos-nix' Qt-for-WebAssembly,
+installed as a prefix, and linked off that prefix into **the runtime's shape** —
+Qt Quick plus the Logos design system plus this transport in one static image,
+which is ADR 0004's bundled QML runtime minus the module QML it will load at
+install time. The build asserts what a link cannot: that both halves of the
+page-facing embind API are in the image (nothing in C++ references them, so a
+linker is free to drop them), and that the design system's QML plugins are still
+in it (under a static Qt, Qt's own plugin auto-import and the design system's
+`WHOLE_ARCHIVE` umbrella compete for the same plugins and the loser is silent).
+
+Nothing in that build runs: a Qt-wasm image needs a canvas, a page and a peer.
 
 ## Building
 
@@ -194,7 +204,8 @@ Outputs:
 - `result/bin/ui-host`
 
 The wasm subset — the MessagePort transport alone, against logos-nix'
-Qt-for-WebAssembly, plus a Qt Quick image linking it:
+Qt-for-WebAssembly, plus a Qt Quick + design system image linking it
+(20,894,977 B on aarch64-darwin):
 
 ```sh
 nix build .#messageport-wasm
