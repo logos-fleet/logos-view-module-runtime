@@ -1,5 +1,52 @@
 # Unit tests for logos-view-module-runtime (Qt Test)
 
+# ── the Web container's half ────────────────────────────────────────────────
+#
+# First, and outside the guard below, because these are the tests a
+# -DLOGOS_WEB_ONLY=ON configuration can run: they link Qt and this repo and
+# nothing else, exactly as the wasm image does.
+
+# QtRO over a MessagePort: the transport the Web container's QML runtime uses
+# to reach a module's backend (ADR 0004). Drives a real QRemoteObjectHost and a
+# real replica over a loopback port pair, so every claim but the emscripten
+# wiring is checked here rather than in a browser.
+add_executable(test_messageport_transport
+    test_messageport_transport.cpp
+)
+
+target_link_libraries(test_messageport_transport PRIVATE
+    logos_messageport
+    Qt6::Core
+    Qt6::Test
+    Qt6::RemoteObjects
+)
+
+add_test(NAME MessagePortTransportTests COMMAND test_messageport_transport)
+
+# The QML runtime over that transport: a module's QML installed as text into one
+# engine, `logos` in its root context, a binding that follows a replica property,
+# and callModuleAsync over the host's router. Everything ADR 0004's runtime does
+# except paint, which is why it needs no window.
+add_executable(test_web_runtime
+    test_web_runtime.cpp
+)
+
+target_link_libraries(test_web_runtime PRIVATE
+    logos_web_runtime
+    Qt6::Core
+    Qt6::Qml
+    Qt6::Test
+    Qt6::RemoteObjects
+)
+
+add_test(NAME WebRuntimeTests COMMAND test_web_runtime)
+
+if(LOGOS_WEB_ONLY)
+    return()
+endif()
+
+# ── the desktop half ────────────────────────────────────────────────────────
+
 add_executable(test_logos_qml_bridge
     test_logos_qml_bridge.cpp
 )
@@ -297,20 +344,3 @@ set_target_properties(test_ui_host_unload PROPERTIES
 )
 
 add_test(NAME UiHostUnloadTests COMMAND test_ui_host_unload)
-
-# QtRO over a MessagePort: the transport the Web container's QML runtime uses
-# to reach a module's backend (ADR 0004). Drives a real QRemoteObjectHost and a
-# real replica over a loopback port pair, so every claim but the emscripten
-# wiring is checked here rather than in a browser.
-add_executable(test_messageport_transport
-    test_messageport_transport.cpp
-)
-
-target_link_libraries(test_messageport_transport PRIVATE
-    logos_messageport
-    Qt6::Core
-    Qt6::Test
-    Qt6::RemoteObjects
-)
-
-add_test(NAME MessagePortTransportTests COMMAND test_messageport_transport)

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <title>logos-qml-runtime browser smoke</title>
+  <style>html,body{margin:0;padding:0;height:100%;overflow:hidden}#screen{width:100%;height:100%}</style>
+</head>
+<body>
+<div id="screen"></div>
+<script>
+// THE PAGE HALF OF THE BROWSER SMOKE. See run.mjs for what this is for and why
+// it is not a nix check.
+//
+// It is also the shortest honest example of what a Web container's page does
+// with the runtime: boot the image, hand it a port, hand it a module's QML.
+// Everything below `qtLoad` is the page-facing API and nothing else.
+
+const logs = [];
+const note = (line) => { logs.push(String(line)); };
+
+// Qt's wasm message handler writes qWarning/qCritical straight to the console,
+// not through emscripten's print hooks, and a QML type that fails to
+// INSTANTIATE says so only there. Without this the interesting failures are
+// invisible and every symptom is a bare exception pointer.
+for (const level of ['log', 'warn', 'error', 'info', 'debug']) {
+  const original = console[level].bind(console);
+  console[level] = (...args) => { note(level + ': ' + args.map(String).join(' ')); original(...args); };
+}
+
+const report = (o) => {
+  try { navigator.sendBeacon('/result', JSON.stringify(o)); } catch (e) { /* fetch below */ }
+  fetch('/result', { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
+};
+window.onerror = (m) => report({ ok: false, error: 'window.onerror: ' + m, logs });
+
+// What a `ui_qml` module's `web` variant looks like: the Logos design system,
+// the Qt QML modules any real view uses, and the runtime's own per-module
+// context property. Not a reduced case on purpose — this is the document the
+// counter UI will ship.
+const COUNTER_QML = `
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+import Logos.Theme
+import Logos.Controls
+Rectangle {
+    color: Theme.palette.background
+    ColumnLayout {
+        anchors.centerIn: parent
+        spacing: 16
+        LogosText { objectName: "value"; Layout.alignment: Qt.AlignHCenter; text: "0" }
+        LogosButton {
+            objectName: "button"
+            Layout.alignment: Qt.AlignHCenter
+            text: "Increment me (" + logosModuleName + ")"
+        }
+    }
+}`;
+
+// Each entry is one QML module the runtime PROMISES a module's document
+// (wasm/runtime/RuntimeImports.qml). A static Qt links a QML plugin only if the
+// build saw the import, so each of these has failed at runtime at least once.
+const INSTALLS = [
+  ['qtcore',   true,  'import QtQml\nimport QtCore\nQtObject { property Settings s: Settings { category: "smoke" } }'],
+  ['layouts',  true,  'import QtQuick\nimport QtQuick.Layouts\nItem { ColumnLayout { } }'],
+  ['controls', true,  'import QtQuick\nimport QtQuick.Controls\nItem { Button { text: "b" } }'],
+  ['counter',  true,  COUNTER_QML],
+  // The SECOND module, into the same image: slice 27's fourth criterion, in the
+  // only place it can actually be observed.
+  ['greeter',  true,  COUNTER_QML],
+  // A document that does not compile must be REPORTED. A silent failure here
+  // looks exactly like a module that has not loaded yet.
+  ['broken',   false, 'import QtQuick\nNotAType { }'],
+];
+
+const EXPORTS = ['logosAdoptMessagePort', 'logosMessagePortDeliver',
+                 'logosInstallModuleView', 'logosRemoveModuleView',
+                 'logosConnectBackend', 'logosRuntimeLastError'];
+
+async function main() {
+  const checks = [];
+  const check = (name, ok, detail) => { checks.push({ name, ok, detail }); };
+  try {
+    const instance = await qtLoad({
+      qt: {
+        entryFunction: window.logos_qml_runtime_entry,
+        containerElements: [document.querySelector('#screen')],
+      }
+    });
+    check('boots', true, '');
+
+    for (const fn of EXPORTS)
+      check('export:' + fn, typeof instance[fn] === 'function', '');
+
+    // The page's end of the wire. Nothing is listening on the other end here —
+    // that needs a module's Wasm host, which this smoke does not have — so what
+    // is checked is that the call exists and takes a real MessagePort.
+    const channel = new MessageChannel();
+    instance.logosAdoptMessagePort('backend', channel.port1);
+    check('adopts a MessagePort', true, '');
+
+    for (const [name, shouldInstall, qml] of INSTALLS) {
+      let installed = null;
+      let detail = '';
+      try {
+        installed = instance.logosInstallModuleView(name, qml);
+        detail = instance.logosRuntimeLastError();
+      } catch (e) {
+        detail = 'threw: ' + e;
+      }
+      check('install:' + name, installed === shouldInstall, detail);
+      if (shouldInstall && installed)
+        check('install:' + name + ' clean', detail === '', detail);
+      if (!shouldInstall && installed === false)
+        check('install:' + name + ' reported',
+              detail !== '', detail === '' ? 'no error was recorded' : detail);
+      await new Promise(r => setTimeout(r, 200));
+    }
+
+    check('removes a module view', instance.logosRemoveModuleView('greeter') === true, '');
+
+    // Long enough for a frame or two, so a type that instantiates but explodes
+    // on paint still shows up in the console capture.
+    await new Promise(r => setTimeout(r, 2000));
+
+    const failed = checks.filter((c) => !c.ok);
+    report({ ok: failed.length === 0, checks, logs });
+  } catch (e) {
+    report({ ok: false, checks, logs, error: String((e && e.stack) || e) });
+  }
+}
+</script>
+<script src="logos_qml_runtime.js"></script>
+<script src="qtloader.js"></script>
+<script>main()</script>
+</body>
+</html>
