@@ -92,10 +92,21 @@ public:
 
     QIODevice* connection() const override { return m_device; }
 
+    // THE NODE'S RETRY ENTERS HERE, over and over, for the whole life of a
+    // connection that keeps failing — so anything this early-returns on has to
+    // be a state a retry can still get out of. A live device is; a dead one is
+    // not, which is why it is dropped rather than kept.
+    //
+    // A MessagePort has no reconnect of its own: a port whose peer is gone is
+    // gone for good, and what the page does instead is respawn the Worker and
+    // hand over a FRESH channel under the same names (see
+    // LogosMessagePortTransport::publish). Taking that new port means letting
+    // go of the old device first.
     void connectToServer() override
     {
-        if (m_device)
+        if (m_device && m_device->isOpen())
             return;
+        discardDevice();
 
         LogosMessagePort* port = PortRegistry::instance()->take(portNameOf(url()));
         if (!port) {
@@ -110,6 +121,10 @@ public:
         m_device = new LogosMessagePortDevice(port, this);
         connect(m_device, &QIODevice::readyRead, this, &QtROIoDeviceBase::readyRead);
         connect(m_device, &LogosMessagePortDevice::disconnected, this, [this]() {
+            // Dropped HERE as well as in connectToServer(): between the peer
+            // dying and the node's next retry, connection() must not hand QtRO
+            // a device reading from a closed port.
+            discardDevice();
             emit shouldReconnect(this);
         });
         initializeDataStream();
@@ -132,6 +147,17 @@ protected:
     }
 
 private:
+    // deleteLater, not delete: this runs from inside the device's own
+    // disconnected() signal.
+    void discardDevice()
+    {
+        if (!m_device)
+            return;
+        m_device->disconnect(this);
+        m_device->deleteLater();
+        m_device = nullptr;
+    }
+
     LogosMessagePortDevice* m_device = nullptr;
 };
 

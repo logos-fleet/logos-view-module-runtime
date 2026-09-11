@@ -110,6 +110,7 @@ private Q_SLOTS:
     void oneMessagePortCarriesTwoModulesBackends();
     void aRuntimeThatStartsBeforeItsBackendReconnects();
     void closingThePortInvalidatesTheReplica();
+    void aRuntimeRecoversWhenThePageHandsItAFreshPort();
 
 private:
     QString name(const char* role) const
@@ -394,6 +395,49 @@ void TestMessagePortTransport::closingThePortInvalidatesTheReplica()
     // rather than left binding to values that stopped changing.
     pair.first->close();
     QTRY_VERIFY(!replica->isReplicaValid());
+}
+
+void TestMessagePortTransport::aRuntimeRecoversWhenThePageHandsItAFreshPort()
+{
+    QObject owner;
+    auto pair = LogosLoopbackMessagePort::createPair(&owner);
+    LogosMessagePortTransport::publish(name("backend"), pair.first);
+    LogosMessagePortTransport::publish(name("runtime"), pair.second);
+
+    CounterSource first;
+    auto* host = new QRemoteObjectHost(&owner);
+    QVERIFY(host->setHostUrl(LogosMessagePortTransport::url(name("backend"))));
+    QVERIFY(host->enableRemoting(&first, QStringLiteral("counter")));
+
+    QRemoteObjectNode node;
+    QVERIFY(node.connectToNode(LogosMessagePortTransport::url(name("runtime"))));
+    QScopedPointer<QRemoteObjectDynamicReplica> replica(
+        node.acquireDynamic(QStringLiteral("counter")));
+    QVERIFY(replica->waitForSource(5000));
+
+    // THE WORKER TRAPPED. Its port dies with it and the view is told, which is
+    // closingThePortInvalidatesTheReplica above.
+    pair.first->close();
+    delete host;
+    QTRY_VERIFY(!replica->isReplicaValid());
+
+    // AND THE PAGE RESPAWNED IT — the case publish() promises to serve: a fresh
+    // channel, published under the same two names, and a fresh backend hosting
+    // on it. The node has been retrying this whole time; the retry has to
+    // actually take the new port rather than keep polling a device whose port
+    // is gone.
+    auto fresh = LogosLoopbackMessagePort::createPair(&owner);
+    LogosMessagePortTransport::publish(name("backend"), fresh.first);
+    LogosMessagePortTransport::publish(name("runtime"), fresh.second);
+
+    CounterSource second;
+    second.increment();
+    QRemoteObjectHost restarted;
+    QVERIFY(restarted.setHostUrl(LogosMessagePortTransport::url(name("backend"))));
+    QVERIFY(restarted.enableRemoting(&second, QStringLiteral("counter")));
+
+    QVERIFY(replica->waitForSource(15000));
+    QTRY_COMPARE(replica->property("value").toInt(), 1);
 }
 
 QTEST_GUILESS_MAIN(TestMessagePortTransport)
