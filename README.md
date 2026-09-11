@@ -252,21 +252,62 @@ naming `callModuleAsync`. The reply has to cross a MessagePort, a MessagePort
 delivers through the event loop, and a page that blocks its event loop waiting
 has stopped reading the port the reply arrives on.
 
+### What a module's QML may import
+
+`wasm/runtime/RuntimeImports.qml`, and nothing else. A static Qt has no plugin
+directory to search, so a QML module is reachable only if **the build saw the
+import** — `qmlimportscanner` reads this target's own QML and links the plugins
+it names. A module's document arrives at runtime and is therefore invisible to
+that scan, which makes that one file the runtime's published surface: adding to
+it costs image size, removing from it breaks modules already published.
+
+Linking the CMake target is not enough and looks exactly like enough. With
+`Qt6::QmlCore` linked but nothing importing `QtCore`, the image builds, boots
+and paints its own shell, and the first document that reaches `Logos.Theme`
+fails with `plugin "qtqmlcoreplugin" not found`.
+
 ### The image
 
-What a desktop test cannot reach is `nix build .#qml-runtime-wasm`: this repo's
-web half compiled for wasm32-emscripten against logos-nix' Qt-for-WebAssembly,
-installed as a prefix, and linked off that prefix into the runtime app in
-`wasm/runtime/`. The build asserts what a link cannot: that every page-facing
-embind export is in the image (nothing in C++ references them, so a linker is
-free to drop them), and that the design system's QML plugins are still in it
-(under a static Qt, Qt's own plugin auto-import and the design system's
-`WHOLE_ARCHIVE` umbrella compete for the same plugins and the loser is silent).
-It logs the image raw and brotli, against ADR 0004's budget.
+`nix build .#qml-runtime-wasm`: this repo's web half compiled for
+wasm32-emscripten against logos-nix' Qt-for-WebAssembly, installed as a prefix,
+and linked off that prefix into the runtime app in `wasm/runtime/`. The build
+asserts what a link cannot: that every page-facing embind export is in the image
+(nothing in C++ references them, so a linker is free to drop them), and that the
+design system's QML plugins are still in it (under a static Qt, Qt's own plugin
+auto-import and the design system's `WHOLE_ARCHIVE` umbrella compete for the
+same plugins and the loser is silent). It logs the image raw and brotli against
+ADR 0004's budget: **25,888,796 B / 6,672,518 B** on aarch64-darwin.
 
-Nothing in that build runs: a Qt-wasm image needs a canvas, a page and a peer.
-The runtime's behaviour is checked on the desktop, against a real
-`QRemoteObjectHost` and a real `QQmlEngine`, in `tests/test_web_runtime.cpp`.
+### The browser smoke
+
+```sh
+nix build .#qml-runtime-wasm
+node wasm/runtime/browser-smoke/run.mjs result/www
+```
+
+Not a nix check and it cannot become one — the sandbox has no browser and
+darwin has no chromium in nixpkgs — so it is run by hand, on a venue with a
+Chrome. It serves the built `www/` over http (a `file://` page cannot fetch a
+sibling `.wasm`), boots the image in headless Chrome, and asserts every embind
+export, a real `MessagePort` adopted, each promised QML module instantiated,
+**two** modules' documents installed into the one image, a broken document
+reported rather than swallowed, and a removal.
+
+It exists because a class of failure lives only here, and it caught three of
+them while it was being written:
+
+- `QGuiApplication::exec()` **returns** in a wasm image, so an engine on
+  `main()`'s stack is gone before the page's first call arrives;
+- `import QtCore` needed both `Qt6::QmlCore` linked and an import the build
+  could see (above);
+- `return 1` from `main()` aborts the emscripten runtime, after which every call
+  from the page throws a bare pointer — including the one that would have asked
+  what went wrong.
+
+What it still does not cover is a **peer**: nothing hosts a QtRO source on the
+other end of the port, so the replica half is proven on the desktop only
+(`tests/test_web_runtime.cpp`, against a real `QRemoteObjectHost` and a real
+`QQmlEngine`).
 
 ## Building
 

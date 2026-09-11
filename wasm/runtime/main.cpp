@@ -90,16 +90,39 @@ EMSCRIPTEN_BINDINGS(logos_qml_runtime)
 
 #endif // __EMSCRIPTEN__
 
+// EVERYTHING THE PAGE WILL CALL INTO LIVES ON THE HEAP, and it took a browser to
+// find out why. `QGuiApplication::exec()` RETURNS in a Qt-for-WebAssembly image:
+// the event loop is the browser's, and main() falling off its end is the normal
+// end of startup, not the end of the program — the emscripten runtime stays up
+// and the page keeps calling in. Stack objects are destroyed on the way out, so
+// an engine declared here is gone by the time the first
+// `Module.logosInstallModuleView` arrives, and the runtime answers "no QML
+// engine" forever after. Nothing about that is visible on the desktop, where
+// exec() returns only when the app is quitting.
+//
+// Never deleted, and there is nothing to delete them with: the image lives as
+// long as the page does.
 int main(int argc, char* argv[])
 {
-    QGuiApplication app(argc, argv);
+    auto* app = new QGuiApplication(argc, argv);
 
-    QQmlApplicationEngine engine;
+    // NAMED BEFORE ANYTHING READS A SETTING. QSettings refuses to initialise
+    // without an organisation, and in a browser that refusal is not academic:
+    // the Logos design system's Theme singleton persists the selected theme
+    // through `Settings`, so an unnamed runtime logs two warnings per page load
+    // and silently falls back to its default theme. Constants rather than
+    // anything the page can set — the identity of the runtime is not a page's
+    // to assert (ADR 0005).
+    QCoreApplication::setOrganizationName(QStringLiteral("Logos"));
+    QCoreApplication::setOrganizationDomain(QStringLiteral("logos.co"));
+    QCoreApplication::setApplicationName(QStringLiteral("logos-qml-runtime"));
+
+    auto* engine = new QQmlApplicationEngine;
 
     // Built before the scene, so `logos` is in the root context by the time any
     // document — the runtime's own shell included — is compiled.
-    g_runtime = new LogosWebRuntime(&engine);
-    engine.rootContext()->setContextProperty(QStringLiteral("runtime"), g_runtime);
+    g_runtime = new LogosWebRuntime(engine, engine);
+    engine->rootContext()->setContextProperty(QStringLiteral("runtime"), g_runtime);
 
     // CONNECTED BEFORE THE PAGE HAS HANDED ANYTHING OVER, and that is the
     // ordinary order: this image is up long before the Worker has instantiated
@@ -107,8 +130,15 @@ int main(int argc, char* argv[])
     // the node's reconnect timer takes the port the moment it appears.
     g_runtime->connectToBackend(QLatin1StringView(kBackendPort));
 
-    engine.loadFromModule("LogosQmlRuntime", "Main");
-    if (engine.rootObjects().isEmpty())
-        return 1;
-    return app.exec();
+    engine->loadFromModule("LogosQmlRuntime", "Main");
+    if (engine->rootObjects().isEmpty()) {
+        // SAID OUT LOUD AND CARRIED ON, never `return 1`. A non-zero return from
+        // main() in a wasm image is an emscripten `exitJS`, which marks the
+        // runtime aborted — after which EVERY later call from the page throws a
+        // bare pointer, including the one that would have asked what went wrong.
+        // A runtime whose own shell did not load is broken, but it has to stay
+        // able to say so.
+        qCritical("logos-qml-runtime: the runtime shell (Main.qml) did not load");
+    }
+    return app->exec();
 }

@@ -14,7 +14,20 @@ project(logos_qml_runtime LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Svg RemoteObjects)
+# THE QML MODULE SURFACE THE RUNTIME OFFERS, and it is decided HERE, once, for
+# every module that will ever be installed into this image. A static Qt cannot
+# load a QML module at runtime — there is no plugin directory in a page — so a
+# `import QtQuick.Layouts` in a module's document resolves against what this
+# link put in, or it does not resolve at all. Getting it wrong is invisible
+# until a document is compiled in a browser: the image builds, boots and
+# renders its own shell perfectly.
+#
+#   QmlCore        `import QtCore` — Settings, which Logos.Theme persists with
+#   QuickLayouts   `import QtQuick.Layouts` — every non-trivial module view
+#   QuickControls2 `import QtQuick.Controls` — and what Logos.Controls builds on
+#   Svg            the design system's icons
+find_package(Qt6 REQUIRED COMPONENTS
+    Core Gui Qml QmlCore Quick QuickControls2 QuickLayouts Svg RemoteObjects)
 find_package(LogosDesignSystem CONFIG REQUIRED)
 
 qt_standard_project_setup(REQUIRES 6.5)
@@ -28,7 +41,12 @@ qt_add_executable(logos_qml_runtime main.cpp)
 qt_add_qml_module(logos_qml_runtime
     URI LogosQmlRuntime
     VERSION 1.0
-    QML_FILES Main.qml
+    QML_FILES
+        Main.qml
+        # Not instantiated, and load-bearing anyway: qmlimportscanner reads the
+        # static QML plugins to link out of THIS list, and a module's document
+        # arrives too late to be read. See the file.
+        RuntimeImports.qml
 )
 
 target_include_directories(logos_qml_runtime PRIVATE ${LOGOS_WEB_RUNTIME_ROOT}/include)
@@ -40,7 +58,9 @@ target_link_libraries(logos_qml_runtime PRIVATE
     ${LOGOS_WEB_RUNTIME_ROOT}/lib/liblogos_web_runtime.a
     ${LOGOS_WEB_RUNTIME_ROOT}/lib/liblogos_messageport.a
     Qt6::Quick
+    Qt6::QmlCore
     Qt6::QuickControls2
+    Qt6::QuickLayouts
     Qt6::Svg
     Qt6::RemoteObjects
     Logos::DesignSystem
