@@ -58,6 +58,17 @@ pkgs.stdenv.mkDerivation {
   checkPhase = ''
     runHook preCheck
     export QT_QPA_PLATFORM=offscreen
+
+    # WHERE THE QML MODULES ARE. ctest runs the test binaries straight out of
+    # the build tree, so wrapQtAppsHook -- which only ever touches what gets
+    # installed -- has set nothing for them, and a test that COMPILES a QML
+    # document (test_web_runtime does, the way the runtime compiles a module's)
+    # fails with `module "QtQml" is not installed`. Both spellings: Qt 6 reads
+    # QML_IMPORT_PATH, and QML2_IMPORT_PATH is still honoured and still what
+    # most of the ecosystem sets.
+    export QML_IMPORT_PATH="${pkgs.qt6.qtdeclarative}/lib/qt-6/qml"
+    export QML2_IMPORT_PATH="$QML_IMPORT_PATH"
+
     ctest --output-on-failure
     runHook postCheck
   '';

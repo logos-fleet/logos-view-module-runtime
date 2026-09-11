@@ -8,16 +8,20 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 option(LOGOS_VIEW_RUNTIME_BUILD_TESTS "Build unit tests for logos-view-module-runtime" OFF)
 
-# THE WASM SUBSET. The MessagePort QtRO transport is the only part of this repo
-# that has to compile for wasm32-emscripten, and it is the only part that can:
-# everything else links logos-qt-host, which brings the whole native SDK stack
-# with it. Turning this on builds `logos_messageport` and nothing else, which is
-# what nix/wasm.nix hands to a Qt-for-WebAssembly toolchain.
-option(LOGOS_MESSAGEPORT_ONLY "Build only the MessagePort QtRO transport (the wasm subset)" OFF)
+# THE WASM SUBSET: the MessagePort QtRO transport and the QML runtime over it.
+# Those two are the only parts of this repo that have to compile for
+# wasm32-emscripten, and the only parts that can — everything else links
+# logos-qt-host, which brings the whole native SDK stack with it. Turning this
+# on builds `logos_messageport` and `logos_web_runtime` and stops, which is what
+# nix/wasm.nix hands to a Qt-for-WebAssembly toolchain.
+#
+# It is also a useful DESKTOP configuration, and the tests use it as one: this
+# half needs no SDK roots, so it configures and runs anywhere Qt does.
+option(LOGOS_WEB_ONLY "Build only the Web container's half: the MessagePort transport and the QML runtime" OFF)
 
-# Split in two: the first line is everything the MessagePort transport needs,
+# Split in two: the first line is everything the Web container's half needs,
 # and a wasm build stops after it.
-find_package(Qt6 REQUIRED COMPONENTS Core Network RemoteObjects)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Qml RemoteObjects)
 
 # ── MessagePort QtRO transport ──────────────────────────────────────────────
 #
@@ -61,17 +65,64 @@ endif()
 
 install(TARGETS logos_messageport ARCHIVE DESTINATION lib)
 
-if(LOGOS_MESSAGEPORT_ONLY)
+# ── the Web container's QML runtime ─────────────────────────────────────────
+#
+# ADR 0004's bundled runtime, as a library: one QML engine, one QtRO node over
+# the transport above, `logos` in the engine's root context, and a module's QML
+# loaded into it as text at install time. Qt Qml and NOT Qt Quick on purpose —
+# where a view goes on screen is the runtime app's business, and keeping the
+# scene out of here is what lets the whole thing be tested on a desktop with no
+# window (tests/test_web_runtime.cpp).
+#
+# Separate from logos_messageport because they answer to different consumers: a
+# module backend inside its Wasm host links the transport and has no QML engine
+# in it at all.
+add_library(logos_web_runtime STATIC
+    src/LogosWebBridge.cpp
+    src/LogosWebCallRouter.cpp
+    src/LogosWebRuntime.cpp
+    include/LogosWebBridge.h
+    include/LogosWebCallRouter.h
+    include/LogosWebRuntime.h
+)
+
+target_include_directories(logos_web_runtime PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(logos_web_runtime PUBLIC
+    logos_messageport
+    Qt6::Core
+    Qt6::Qml
+    Qt6::RemoteObjects
+)
+
+set_target_properties(logos_web_runtime PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+install(TARGETS logos_web_runtime ARCHIVE DESTINATION lib)
+
+if(LOGOS_WEB_ONLY)
     install(FILES
         include/LogosMessagePort.h
         include/LogosMessagePortDevice.h
         include/LogosMessagePortTransport.h
         include/LogosEmscriptenMessagePort.h
+        include/LogosWebBridge.h
+        include/LogosWebCallRouter.h
+        include/LogosWebRuntime.h
         DESTINATION include)
+
+    # The Web half's own tests, which need nothing this configuration skipped.
+    if(LOGOS_VIEW_RUNTIME_BUILD_TESTS)
+        find_package(Qt6 REQUIRED COMPONENTS Test)
+        enable_testing()
+        add_subdirectory(tests)
+    endif()
     return()
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Qml Gui Quick)
+find_package(Qt6 REQUIRED COMPONENTS Gui Quick)
 if(LOGOS_VIEW_RUNTIME_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
 endif()

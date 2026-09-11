@@ -176,18 +176,97 @@ The transport's behaviour is checked on the **desktop**, against a real
 `QRemoteObjectHost` over a loopback port pair with the same four properties a
 MessagePort has (`tests/test_messageport_transport.cpp`).
 
-What a desktop test cannot reach is `nix build .#messageport-wasm`: the
-transport compiled for wasm32-emscripten against logos-nix' Qt-for-WebAssembly,
-installed as a prefix, and linked off that prefix into **the runtime's shape** —
-Qt Quick plus the Logos design system plus this transport in one static image,
-which is ADR 0004's bundled QML runtime minus the module QML it will load at
-install time. The build asserts what a link cannot: that both halves of the
-page-facing embind API are in the image (nothing in C++ references them, so a
-linker is free to drop them), and that the design system's QML plugins are still
-in it (under a static Qt, Qt's own plugin auto-import and the design system's
+## The QML runtime (the Web container's page)
+
+The transport above is the wire. `logos_web_runtime` is what sits on it: ADR
+0004's **bundled QML runtime** — one Qt-for-WebAssembly image, shipped and
+signed with the app, into which every Downloaded module's QML is loaded at
+install time.
+
+```
+   ~21 MB of runtime, once                 a module's QML, per module
+   ┌──────────────────────────────┐        ┌─────────┐ ┌─────────┐
+   │ Qt Quick + Logos design      │  ◄──── │ counter │ │ wallet  │   text, fetched
+   │ system + MessagePort QtRO    │        └─────────┘ └─────────┘
+   │ + LogosWebRuntime            │
+   └──────────────────────────────┘
+```
+
+Three classes, one of which a host never touches:
+
+- **`LogosWebRuntime`** — the runtime. Registers the scheme, connects one node
+  to the port the page published, puts one `LogosWebBridge` in the engine's root
+  context as `logos`, and compiles a module's QML from a string
+  (`installModuleView`). A second module costs a document, not a second image.
+- **`LogosWebBridge`** — `logos`, as a module's QML sees it. The same three
+  calls the desktop bridge offers a view: `module()`, `callModuleAsync()`,
+  `watch()`.
+- **`LogosWebCallRouter`** — the other half of `callModuleAsync`, hosted by the
+  module's **Wasm host** and reached over the same port. A view calling a
+  *native* module by name has to leave the page somehow, and a QtRO source with
+  a handler on it is that seam; the runtime has no LogosAPI and no token store
+  in it, and must not grow one.
+
+From the page, the whole API is four embind calls and no Qt type:
+
+```js
+const channel = new MessageChannel();
+worker.postMessage({ logosPort: channel.port2 }, [channel.port2]);
+Module.logosAdoptMessagePort('backend', channel.port1);
+Module.logosInstallModuleView('counter', await (await fetch(qmlUrl)).text());
+// Module.logosRemoveModuleView(name), Module.logosRuntimeLastError()
+```
+
+### The one way a module's QML differs from the desktop
+
+`logos.module(name)` **answers null until the backend is there**, and a view
+takes it again on `moduleReadyChanged`:
+
+```qml
+property var backend: null
+property int shown: (backend && backend.value !== undefined) ? backend.value : -1
+
+Component.onCompleted: {
+    logos.moduleReadyChanged.connect(function (name, ready) {
+        if (name === "counter" && ready) backend = logos.module(name)
+    })
+    backend = logos.module("counter")     // the early call is what starts the acquire
+}
+```
+
+That is not a style preference. A desktop host loads the view module's generated
+factory plugin and gets a **typed** replica whose metaobject is compiled in; a
+page cannot dlopen, so the types come off the wire and the replica is a
+**dynamic** one. Qt's QML engine builds a property cache for an object the first
+time JS touches it and keeps it — hand a dynamic replica over early and QML
+caches the generic `QRemoteObjectReplica` metaobject, after which the module's
+properties read `undefined` forever and its slots are "not a function". Waiting
+is the only version of this that works, and returning null is how the bridge
+makes the wait visible instead of silent.
+
+Everything after that edge is ordinary QML: a slot call drives the backend and
+the property change comes back on its own.
+
+`callModule` — the synchronous form — is **refused** here, with an error payload
+naming `callModuleAsync`. The reply has to cross a MessagePort, a MessagePort
+delivers through the event loop, and a page that blocks its event loop waiting
+has stopped reading the port the reply arrives on.
+
+### The image
+
+What a desktop test cannot reach is `nix build .#qml-runtime-wasm`: this repo's
+web half compiled for wasm32-emscripten against logos-nix' Qt-for-WebAssembly,
+installed as a prefix, and linked off that prefix into the runtime app in
+`wasm/runtime/`. The build asserts what a link cannot: that every page-facing
+embind export is in the image (nothing in C++ references them, so a linker is
+free to drop them), and that the design system's QML plugins are still in it
+(under a static Qt, Qt's own plugin auto-import and the design system's
 `WHOLE_ARCHIVE` umbrella compete for the same plugins and the loser is silent).
+It logs the image raw and brotli, against ADR 0004's budget.
 
 Nothing in that build runs: a Qt-wasm image needs a canvas, a page and a peer.
+The runtime's behaviour is checked on the desktop, against a real
+`QRemoteObjectHost` and a real `QQmlEngine`, in `tests/test_web_runtime.cpp`.
 
 ## Building
 
@@ -200,15 +279,15 @@ nix build .#default
 Outputs:
 - `result/lib/liblogos_view_module_runtime.a`
 - `result/lib/liblogos_messageport.a`
+- `result/lib/liblogos_web_runtime.a`
 - `result/include/` — public headers
 - `result/bin/ui-host`
 
-The wasm subset — the MessagePort transport alone, against logos-nix'
-Qt-for-WebAssembly, plus a Qt Quick + design system image linking it
-(20,894,977 B on aarch64-darwin):
+The Web container's half, against logos-nix' Qt-for-WebAssembly, linked into the
+QML runtime image (`result/www/` is what a page loads):
 
 ```sh
-nix build .#messageport-wasm
+nix build .#qml-runtime-wasm
 ```
 
 ### CMake (manual)
@@ -223,8 +302,10 @@ cmake --install build --prefix ./out
 ```
 
 All three roots are required — the build stops with `FATAL_ERROR` if any is
-undefined, unless `-DLOGOS_MESSAGEPORT_ONLY=ON` is passed, which builds
-`logos_messageport` and stops there (this is what the wasm build does).
+undefined, unless `-DLOGOS_WEB_ONLY=ON` is passed, which builds
+`logos_messageport` and `logos_web_runtime` and stops there (this is what the
+wasm build does, and it is also how the Web half's own tests are built on a
+desktop with no SDK around).
 `LOGOS_CPP_SDK_ROOT` must point at an installed `logos-cpp-sdk` (provides
 `logos_api.h` and `liblogos_sdk`), `LOGOS_QT_HOST_ROOT` at `logos-qt-host`, and
 `LOGOS_PROTOCOL_ROOT` at `logos-protocol`.
