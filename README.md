@@ -224,9 +224,10 @@ cmake --install build --prefix ./out
 
 All three roots are required — the build stops with `FATAL_ERROR` if any is
 undefined, unless `-DLOGOS_MESSAGEPORT_ONLY=ON` is passed, which builds
-`logos_messageport` and stops there (this is what the wasm build does). `LOGOS_CPP_SDK_ROOT` must point at an installed `logos-cpp-sdk`
-(provides `logos_api.h` and `liblogos_sdk`), `LOGOS_QT_HOST_ROOT` at
-`logos-qt-host`, and `LOGOS_PROTOCOL_ROOT` at `logos-protocol`.
+`logos_messageport` and stops there (this is what the wasm build does).
+`LOGOS_CPP_SDK_ROOT` must point at an installed `logos-cpp-sdk` (provides
+`logos_api.h` and `liblogos_sdk`), `LOGOS_QT_HOST_ROOT` at `logos-qt-host`, and
+`LOGOS_PROTOCOL_ROOT` at `logos-protocol`.
 
 ## Consuming from another repo
 

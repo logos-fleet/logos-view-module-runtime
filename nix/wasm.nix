@@ -71,11 +71,20 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $out
     cp -r prefix/lib prefix/include $out/
 
-    image=build-smoke/logos_messageport_wasm_smoke.wasm
-    for f in logos_messageport_wasm_smoke.wasm logos_messageport_wasm_smoke.js \
-             logos_messageport_wasm_smoke.html qtloader.js; do
+    # Everything a Qt-wasm link is supposed to leave behind, and the whole of
+    # what a page needs to load it: checked here, copied to $out/www below.
+    artifacts=(
+      logos_messageport_wasm_smoke.wasm
+      logos_messageport_wasm_smoke.js
+      logos_messageport_wasm_smoke.html
+      qtloader.js
+    )
+    for f in "''${artifacts[@]}"; do
       [ -f "build-smoke/$f" ] || { echo "the wasm link produced no $f" >&2; exit 1; }
     done
+
+    image=build-smoke/logos_messageport_wasm_smoke.wasm
+    glue=build-smoke/logos_messageport_wasm_smoke.js
 
     # THE TWO CALLS THAT CROSS THE LANGUAGE BOUNDARY, read back off the linked
     # JS. They are embind exports, which means a linker that dropped the
@@ -84,7 +93,7 @@ pkgs.stdenv.mkDerivation {
     # leaves an image that builds, loads, renders, and can never be handed a
     # port. Asserting the names is the only thing that catches it.
     for symbol in logosAdoptMessagePort logosMessagePortDeliver; do
-      grep -a -q "$symbol" build-smoke/logos_messageport_wasm_smoke.js "$image" || {
+      grep -a -q "$symbol" "$glue" "$image" || {
         echo "the image does not export $symbol: the emscripten port was dropped" >&2
         echo "  from the link (embind registrations live in an object nothing" >&2
         echo "  references from C++)." >&2
@@ -109,10 +118,9 @@ pkgs.stdenv.mkDerivation {
     done
 
     mkdir -p $out/www
-    cp build-smoke/logos_messageport_wasm_smoke.wasm \
-       build-smoke/logos_messageport_wasm_smoke.js \
-       build-smoke/logos_messageport_wasm_smoke.html \
-       build-smoke/qtloader.js $out/www/
+    for f in "''${artifacts[@]}"; do
+      cp "build-smoke/$f" $out/www/
+    done
 
     raw=$(wc -c < "$image")
     echo "logos-messageport-wasm: Qt ${qtWasm.version}, emsdk ${pkgs.logosEmscriptenVersion}"

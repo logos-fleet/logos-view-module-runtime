@@ -31,7 +31,7 @@
 // WHAT A MESSAGEPORT CANNOT TELL YOU is that the peer is gone: there is no
 // close event, and a Worker that trapped leaves its port looking perfectly
 // healthy. Death is reported the way the loader page already reports it for the
-// Wasm host (slice 26) — as a control message, which the page turns into
+// Wasm host — as a control message, which the page turns into
 // close() — and never inferred here.
 class LogosEmscriptenMessagePort : public LogosMessagePort
 {

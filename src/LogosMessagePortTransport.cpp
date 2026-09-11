@@ -48,7 +48,7 @@ public:
             return nullptr;
         LogosMessagePort* port = *it;
         m_ports.erase(it);
-        return port ? port : nullptr;
+        return port;
     }
 
 Q_SIGNALS:
