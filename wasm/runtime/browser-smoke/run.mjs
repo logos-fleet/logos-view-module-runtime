@@ -31,7 +31,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { join, extname } from 'node:path';
+import { join, extname, normalize } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -68,8 +68,9 @@ const server = createServer(async (req, res) => {
     return;
   }
   // The smoke page first, the build output second: the page is served from this
-  // directory and everything it loads from the build's.
-  const name = url.pathname === '/' ? '/smoke.html' : url.pathname;
+  // directory and everything it loads from the build's. `normalize` keeps a
+  // request for `/../something` inside the two directories that are on offer.
+  const name = normalize(url.pathname === '/' ? '/smoke.html' : url.pathname);
   for (const dir of [here, www]) {
     try {
       const data = await readFile(join(dir, name));

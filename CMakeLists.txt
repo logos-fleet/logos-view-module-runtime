@@ -81,6 +81,7 @@ add_library(logos_web_runtime STATIC
     src/LogosWebBridge.cpp
     src/LogosWebCallRouter.cpp
     src/LogosWebRuntime.cpp
+    src/LogosWebPayload.h
     include/LogosWebBridge.h
     include/LogosWebCallRouter.h
     include/LogosWebRuntime.h

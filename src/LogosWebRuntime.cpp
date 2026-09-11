@@ -10,6 +10,8 @@
 #include <QRemoteObjectNode>
 #include <QUrl>
 
+#include <memory>
+
 Q_LOGGING_CATEGORY(lcWebRuntime, "logos.web.runtime")
 
 namespace {
@@ -70,54 +72,53 @@ QRemoteObjectNode* LogosWebRuntime::node() const
 
 QObject* LogosWebRuntime::installModuleView(const QString& moduleName, const QString& qml)
 {
-    if (moduleName.isEmpty()) {
-        m_lastError = QStringLiteral("a module view needs a module name");
+    // EVERY FAILURE LEAVES THE SAME THREE TRACES — lastError(), the signal and a
+    // warning — because a page that gets nullptr back has no other way to tell
+    // "this module is broken" from "this module has not arrived yet".
+    auto fail = [this, &moduleName](const QString& error) -> QObject* {
+        m_lastError = error;
+        qCWarning(lcWebRuntime) << "module view" << moduleName << "failed:" << m_lastError;
         emit moduleViewFailed(moduleName, m_lastError);
         return nullptr;
-    }
-    if (!m_engine) {
-        m_lastError = QStringLiteral("the runtime has no QML engine");
-        emit moduleViewFailed(moduleName, m_lastError);
-        return nullptr;
-    }
+    };
+
+    if (moduleName.isEmpty())
+        return fail(QStringLiteral("a module view needs a module name"));
+    if (!m_engine)
+        return fail(QStringLiteral("the runtime has no QML engine"));
+
+    QQmlComponent component(m_engine);
+    component.setData(qml.toUtf8(), documentUrlFor(moduleName));
+    if (component.isError())
+        return fail(component.errorString().trimmed());
 
     // A CONTEXT PER MODULE, child of the root. It carries the one thing a view
     // can legitimately want to know about itself — its own name — and it is
     // also the unit this class destroys on removal, so a module's bindings go
-    // when the module does.
-    auto* context = new QQmlContext(m_engine->rootContext(), this);
+    // when the module does. Held by scope until the view exists, so a document
+    // that compiles but creates nothing leaves none behind.
+    std::unique_ptr<QQmlContext> context(new QQmlContext(m_engine->rootContext()));
     context->setContextProperty(QStringLiteral("logosModuleName"), moduleName);
 
-    QQmlComponent component(m_engine);
-    component.setData(qml.toUtf8(), documentUrlFor(moduleName));
-
-    if (component.isError()) {
-        m_lastError = component.errorString().trimmed();
-        qCWarning(lcWebRuntime) << "module view" << moduleName << "failed to compile:"
-                                << m_lastError;
-        delete context;
-        emit moduleViewFailed(moduleName, m_lastError);
-        return nullptr;
-    }
-
-    QObject* view = component.create(context);
+    QObject* view = component.create(context.get());
     if (!view) {
-        m_lastError = component.errorString().trimmed();
-        if (m_lastError.isEmpty())
-            m_lastError = QStringLiteral("the module's QML created no object");
-        delete context;
-        emit moduleViewFailed(moduleName, m_lastError);
-        return nullptr;
+        const QString error = component.errorString().trimmed();
+        return fail(error.isEmpty() ? QStringLiteral("the module's QML created no object")
+                                    : error);
     }
 
     // Replace rather than stack: the page re-fetching a module's document is an
     // upgrade or a reload, never a second copy of the same module on screen.
     removeModuleView(moduleName);
 
+    // Adopted in this order, so that a runtime destroying its children tears
+    // each view down before the context it was created in — the same ordering
+    // removeModuleView() spells out.
     view->setParent(this);
     QQmlEngine::setObjectOwnership(view, QQmlEngine::CppOwnership);
+    context->setParent(this);
 
-    m_views.insert(moduleName, InstalledView{ view, context });
+    m_views.insert(moduleName, InstalledView{ view, context.release() });
     m_order.append(moduleName);
     m_lastError.clear();
 

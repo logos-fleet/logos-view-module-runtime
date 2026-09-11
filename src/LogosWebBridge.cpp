@@ -1,11 +1,11 @@
 #include "LogosWebBridge.h"
 
 #include "LogosWebCallRouter.h"
+#include "LogosWebPayload.h"
 
 #include <QJSEngine>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
 #include <QLoggingCategory>
 #include <QQmlEngine>
 #include <QRemoteObjectDynamicReplica>
@@ -17,21 +17,6 @@
 Q_LOGGING_CATEGORY(lcWebBridge, "logos.web.bridge")
 
 namespace {
-
-// The same envelope LogosQmlBridge emits, so a view that reads
-// `JSON.parse(payload).error` works unchanged in either container.
-QString makeErrorPayload(const QString& error,
-                         const QString& module = QString(),
-                         const QString& method = QString(),
-                         const QString& detail = QString())
-{
-    QJsonObject obj;
-    obj.insert(QStringLiteral("error"), error);
-    if (!module.isEmpty()) obj.insert(QStringLiteral("module"), module);
-    if (!method.isEmpty()) obj.insert(QStringLiteral("method"), method);
-    if (!detail.isEmpty()) obj.insert(QStringLiteral("message"), detail);
-    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
-}
 
 QString argsToJson(const QVariantList& args)
 {
@@ -231,24 +216,31 @@ void LogosWebBridge::callModuleAsync(const QString& module,
             if (!self)
                 return;
             self->deliver(requestId,
-                          makeErrorPayload(QStringLiteral("Call timed out"), module, method,
-                                           QStringLiteral("the backend did not answer in time")));
+                          logosWebErrorPayload(QStringLiteral("Call timed out"), module, method,
+                                               QStringLiteral("the backend did not answer in time")));
         });
     }
 
     if (!m_node) {
         deliver(requestId,
-                makeErrorPayload(QStringLiteral("No backend"), module, method,
-                                 QStringLiteral("the page has handed this runtime no port")));
+                logosWebErrorPayload(QStringLiteral("No backend"), module, method,
+                                     QStringLiteral("the page has handed this runtime no port")));
         return;
     }
 
     ensureRouter();
     if (!m_router) {
         deliver(requestId,
-                makeErrorPayload(QStringLiteral("No backend router"), module, method));
+                logosWebErrorPayload(QStringLiteral("No backend router"), module, method));
         return;
     }
+
+    auto it = m_pending.find(requestId);
+    if (it == m_pending.end() || it->dispatched)
+        return;   // already answered, or already sent by ensureRouter() above:
+                  // acquiring a router whose source is already known initialises
+                  // the replica there and then, and onRouterInitialized() drains
+                  // everything pending — this one included.
 
     // HELD, NOT REFUSED, until the router's source meta arrives. A view calls
     // from Component.onCompleted, which is routinely before the Worker has
@@ -257,9 +249,6 @@ void LogosWebBridge::callModuleAsync(const QString& module,
     if (!m_router->isInitialized())
         return;
 
-    auto it = m_pending.find(requestId);
-    if (it == m_pending.end())
-        return;   // already answered (a zero-length timeout, say)
     it->dispatched = true;
     dispatch(requestId, module, method, it->argsJson);
 }
@@ -297,7 +286,7 @@ QString LogosWebBridge::callModule(const QString& module,
     // through the event loop; a page that blocked its event loop waiting for
     // one has stopped rendering and stopped reading the port it is waiting on,
     // which is a deadlock rather than a slow call.
-    return makeErrorPayload(
+    return logosWebErrorPayload(
         QStringLiteral("Synchronous calls are not available in the Web container"),
         module, method,
         QStringLiteral("use logos.callModuleAsync: a MessagePort answers through "
@@ -317,8 +306,6 @@ void LogosWebBridge::watch(const QVariant& pendingCall,
                            QJSValue onSuccess,
                            QJSValue onError)
 {
-    auto toJs = [this](const QVariant& v) -> QJSValue { return toJsValue(v); };
-
     // canConvert, not a metatype comparison: a typed reply is a SUBCLASS of
     // QRemoteObjectPendingCall with its own metatype. See LogosQmlBridge::watch.
     if (!pendingCall.canConvert<QRemoteObjectPendingCall>()) {
@@ -331,23 +318,23 @@ void LogosWebBridge::watch(const QVariant& pendingCall,
             return;
         }
         if (onSuccess.isCallable())
-            onSuccess.call(QJSValueList() << toJs(pendingCall));
+            onSuccess.call(QJSValueList() << toJsValue(pendingCall));
         return;
     }
 
     auto call = pendingCall.value<QRemoteObjectPendingCall>();
     if (call.isFinished()) {
         if (onSuccess.isCallable())
-            onSuccess.call(QJSValueList() << toJs(call.returnValue()));
+            onSuccess.call(QJSValueList() << toJsValue(call.returnValue()));
         return;
     }
 
     auto* watcher = new QRemoteObjectPendingCallWatcher(call, this);
     connect(watcher, &QRemoteObjectPendingCallWatcher::finished, this,
-            [onSuccess, onError, watcher, toJs]() mutable {
+            [this, onSuccess, onError, watcher]() mutable {
                 const QVariant rv = watcher->returnValue();
                 if (rv.isValid() && onSuccess.isCallable())
-                    onSuccess.call(QJSValueList() << toJs(rv));
+                    onSuccess.call(QJSValueList() << toJsValue(rv));
                 else if (!rv.isValid() && onError.isCallable())
                     onError.call(QJSValueList() << QJSValue(QStringLiteral("call failed")));
                 watcher->deleteLater();

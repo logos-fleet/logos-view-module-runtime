@@ -1,20 +1,6 @@
 #include "LogosWebCallRouter.h"
 
-#include <QJsonDocument>
-#include <QJsonObject>
-
-namespace {
-
-QString errorPayload(const QString& error, const QString& module, const QString& method)
-{
-    QJsonObject obj;
-    obj.insert(QStringLiteral("error"), error);
-    if (!module.isEmpty()) obj.insert(QStringLiteral("module"), module);
-    if (!method.isEmpty()) obj.insert(QStringLiteral("method"), method);
-    return QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact));
-}
-
-} // namespace
+#include "LogosWebPayload.h"
 
 LogosWebCallRouter::LogosWebCallRouter(QObject* parent)
     : QObject(parent)
@@ -49,7 +35,7 @@ void LogosWebCallRouter::call(const QString& requestId,
         // the view's only other outcome would be its own timeout, seconds later
         // and with nothing to say about why.
         complete(requestId,
-                 errorPayload(QStringLiteral("No backend router"), module, method));
+                 logosWebErrorPayload(QStringLiteral("No backend router"), module, method));
         return;
     }
 

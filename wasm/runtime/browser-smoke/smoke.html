@@ -13,10 +13,10 @@
 //
 // It is also the shortest honest example of what a Web container's page does
 // with the runtime: boot the image, hand it a port, hand it a module's QML.
-// Everything below `qtLoad` is the four-call API and nothing else.
+// Everything below `qtLoad` is the page-facing API and nothing else.
 
 const logs = [];
-const note = (line) => { logs[logs.length] = String(line); };
+const note = (line) => { logs.push(String(line)); };
 
 // Qt's wasm message handler writes qWarning/qCritical straight to the console,
 // not through emscripten's print hooks, and a QML type that fails to
@@ -79,7 +79,7 @@ const EXPORTS = ['logosAdoptMessagePort', 'logosMessagePortDeliver',
 
 async function main() {
   const checks = [];
-  const check = (name, ok, detail) => { checks[checks.length] = { name, ok, detail }; };
+  const check = (name, ok, detail) => { checks.push({ name, ok, detail }); };
   try {
     const instance = await qtLoad({
       qt: {

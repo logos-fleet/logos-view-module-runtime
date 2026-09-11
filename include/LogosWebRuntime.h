@@ -18,7 +18,7 @@ class QRemoteObjectNode;
 // QML is loaded AT INSTALL TIME. Not one runtime per module — that is the whole
 // point, and the reason this class holds a list rather than a document:
 //
-//     ~21 MB of runtime, once           a module's QML, per module
+//     ~26 MB of runtime, once           a module's QML, per module
 //     ┌──────────────────────────┐      ┌─────────┐ ┌─────────┐
 //     │ Qt Quick + design system │  ◄── │ counter │ │ wallet  │  … text, fetched
 //     │ + MessagePort QtRO       │      └─────────┘ └─────────┘

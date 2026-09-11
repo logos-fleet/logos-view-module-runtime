@@ -184,7 +184,7 @@ signed with the app, into which every Downloaded module's QML is loaded at
 install time.
 
 ```
-   ~21 MB of runtime, once                 a module's QML, per module
+   ~26 MB of runtime, once                 a module's QML, per module
    ┌──────────────────────────────┐        ┌─────────┐ ┌─────────┐
    │ Qt Quick + Logos design      │  ◄──── │ counter │ │ wallet  │   text, fetched
    │ system + MessagePort QtRO    │        └─────────┘ └─────────┘
@@ -207,7 +207,7 @@ Three classes, one of which a host never touches:
   a handler on it is that seam; the runtime has no LogosAPI and no token store
   in it, and must not grow one.
 
-From the page, the whole API is four embind calls and no Qt type:
+From the page, the whole API is five embind calls and no Qt type:
 
 ```js
 const channel = new MessageChannel();
@@ -215,6 +215,8 @@ worker.postMessage({ logosPort: channel.port2 }, [channel.port2]);
 Module.logosAdoptMessagePort('backend', channel.port1);
 Module.logosInstallModuleView('counter', await (await fetch(qmlUrl)).text());
 // Module.logosRemoveModuleView(name), Module.logosRuntimeLastError()
+// Module.logosConnectBackend(name) — only for a port published under a name
+// other than `backend`, which the image connects to on its own
 ```
 
 ### The one way a module's QML differs from the desktop
@@ -276,7 +278,7 @@ asserts what a link cannot: that every page-facing embind export is in the image
 design system's QML plugins are still in it (under a static Qt, Qt's own plugin
 auto-import and the design system's `WHOLE_ARCHIVE` umbrella compete for the
 same plugins and the loser is silent). It logs the image raw and brotli against
-ADR 0004's budget: **25,888,796 B / 6,672,518 B** on aarch64-darwin.
+ADR 0004's budget: **25,888,755 B / 6,674,406 B** on aarch64-darwin.
 
 ### The browser smoke
 
