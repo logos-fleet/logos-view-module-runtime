@@ -84,13 +84,30 @@
       });
     in
     {
-      packages = forAllSystems ({ pkgs, logosSdk, logosQtHost, logosProtocol, ... }: {
+      packages = forAllSystems ({ system, pkgs, logosSdk, logosQtHost, logosProtocol, ... }: {
         default = import ./nix/default.nix { inherit pkgs logosSdk logosQtHost logosProtocol; };
         tests = import ./nix/test.nix { inherit pkgs logosSdk logosQtHost logosProtocol; };
+      }
+      # THE WASM SUBSET. `x86_64-windows` is a pseudo-system whose `pkgs` is a
+      # mingw cross set; there is no Qt-for-wasm keyed by it and nothing would
+      # want one, so it is the one target that does not get this.
+      // nixpkgs.lib.optionalAttrs (system != "x86_64-windows") {
+        messageport-wasm = import ./nix/wasm.nix {
+          inherit pkgs;
+          inherit (nixpkgs) lib;
+          qtWasm = logos-nix.lib.qtWasmFor system;
+        };
       });
 
-      checks = forAllSystems ({ pkgs, logosSdk, logosQtHost, logosProtocol, ... }: {
+      checks = forAllSystems ({ system, pkgs, logosSdk, logosQtHost, logosProtocol, ... }: {
         default = import ./nix/test.nix { inherit pkgs logosSdk logosQtHost logosProtocol; };
+      }
+      # Linux only, and for the same reason logos-nix' own qt-wasm-qml-probe is:
+      # this one links a whole Qt Quick image and belongs in the CI that has the
+      # cache for it, not in every developer's `nix flake check`. It is
+      # `nix build .#messageport-wasm` everywhere else.
+      // nixpkgs.lib.optionalAttrs (system == "x86_64-linux") {
+        inherit (self.packages.${system}) messageport-wasm;
       });
 
       devShells = forAllSystems ({ pkgs, logosSdk, logosQtHost, logosProtocol, ... }: {

@@ -8,7 +8,70 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 option(LOGOS_VIEW_RUNTIME_BUILD_TESTS "Build unit tests for logos-view-module-runtime" OFF)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Network RemoteObjects Qml Gui Quick)
+# THE WASM SUBSET. The MessagePort QtRO transport is the only part of this repo
+# that has to compile for wasm32-emscripten, and it is the only part that can:
+# everything else links logos-qt-host, which brings the whole native SDK stack
+# with it. Turning this on builds `logos_messageport` and nothing else, which is
+# what nix/wasm.nix hands to a Qt-for-WebAssembly toolchain.
+option(LOGOS_MESSAGEPORT_ONLY "Build only the MessagePort QtRO transport (the wasm subset)" OFF)
+
+# Split in two: the first line is everything the MessagePort transport needs,
+# and a wasm build stops after it.
+find_package(Qt6 REQUIRED COMPONENTS Core Network RemoteObjects)
+
+# ── MessagePort QtRO transport ──────────────────────────────────────────────
+#
+# Its own target, and deliberately Qt-only. In the Web container this code runs
+# inside a Qt-for-WebAssembly image where LogosAPI, the token manager and the
+# whole native SDK do not exist; making it a separate library is what keeps that
+# true, rather than a comment asking people to keep it true.
+add_library(logos_messageport STATIC
+    src/LogosMessagePort.cpp
+    src/LogosMessagePortDevice.cpp
+    src/LogosMessagePortTransport.cpp
+    include/LogosMessagePort.h
+    include/LogosMessagePortDevice.h
+    include/LogosMessagePortTransport.h
+)
+
+target_include_directories(logos_messageport PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(logos_messageport PUBLIC
+    Qt6::Core
+    Qt6::Network
+    Qt6::RemoteObjects
+)
+
+set_target_properties(logos_messageport PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# The real port, added only where there is a browser to have one. embind is what
+# carries the two calls that cross the language boundary
+# (Module.logosAdoptMessagePort in, Module.logosMessagePortDeliver out); it is
+# INTERFACE because the flag belongs to whoever links the final image.
+if(EMSCRIPTEN)
+    target_sources(logos_messageport PRIVATE
+        src/LogosEmscriptenMessagePort.cpp
+        include/LogosEmscriptenMessagePort.h
+    )
+    target_link_options(logos_messageport INTERFACE "-lembind")
+endif()
+
+install(TARGETS logos_messageport ARCHIVE DESTINATION lib)
+
+if(LOGOS_MESSAGEPORT_ONLY)
+    install(FILES
+        include/LogosMessagePort.h
+        include/LogosMessagePortDevice.h
+        include/LogosMessagePortTransport.h
+        include/LogosEmscriptenMessagePort.h
+        DESTINATION include)
+    return()
+endif()
+
+find_package(Qt6 REQUIRED COMPONENTS Qml Gui Quick)
 if(LOGOS_VIEW_RUNTIME_BUILD_TESTS)
     find_package(Qt6 REQUIRED COMPONENTS Test)
 endif()
@@ -77,6 +140,7 @@ target_link_libraries(logos_view_module_runtime PUBLIC
     Qt6::Network
     Qt6::RemoteObjects
     Qt6::Qml
+    logos_messageport
     logos-qt-host::logos_qt_host
     logos-cpp-sdk::logos_headers
 )
