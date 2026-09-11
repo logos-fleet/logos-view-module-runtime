@@ -297,3 +297,20 @@ set_target_properties(test_ui_host_unload PROPERTIES
 )
 
 add_test(NAME UiHostUnloadTests COMMAND test_ui_host_unload)
+
+# QtRO over a MessagePort: the transport the Web container's QML runtime uses
+# to reach a module's backend (ADR 0004). Drives a real QRemoteObjectHost and a
+# real replica over a loopback port pair, so every claim but the emscripten
+# wiring is checked here rather than in a browser.
+add_executable(test_messageport_transport
+    test_messageport_transport.cpp
+)
+
+target_link_libraries(test_messageport_transport PRIVATE
+    logos_messageport
+    Qt6::Core
+    Qt6::Test
+    Qt6::RemoteObjects
+)
+
+add_test(NAME MessagePortTransportTests COMMAND test_messageport_transport)

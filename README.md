@@ -107,6 +107,88 @@ Non-view backend modules continue to use the existing `LogosAPI` IPC path
 unchanged — `LogosQmlBridge` only switches to QRO when the requested module
 name was previously registered via `setViewModuleSocket`.
 
+## QtRO over a MessagePort (the Web container's wire)
+
+On desktop a view module is reached over a **local socket** — `ui-host` in a
+child process, `ViewModuleHost` spawning it. In the Web container there is no
+socket and no child process: the QML runtime and the module's backend are two
+wasm images in one page, and the only channel a browser offers between them is
+an HTML **MessagePort** (ADR 0004). `logos_messageport` is that same QtRO wire
+over that channel, and it is a **separate library** from
+`logos_view_module_runtime` on purpose: it links Qt and nothing else, because
+inside a Qt-for-WebAssembly image `LogosAPI`, the token manager and the rest of
+the native SDK stack do not exist.
+
+```
+   the page                         the module's Worker
+   ┌───────────────────────┐        ┌───────────────────────┐
+   │ Qt-wasm QML runtime   │        │ Wasm host (backend)   │
+   │   QRemoteObjectNode   │        │   QRemoteObjectHost   │
+   │     messageport:      │        │     messageport:      │
+   │        backend  ──────┼────────┼──────►  runtime       │
+   └───────────────────────┘  one   └───────────────────────┘
+                          MessagePort
+```
+
+Three symbols, and the node API is the one every other transport already uses:
+
+```cpp
+LogosMessagePortTransport::registerTransport();                 // once
+LogosMessagePortTransport::publish("backend", port);            // the port you were handed
+
+QRemoteObjectNode node;
+node.connectToNode(LogosMessagePortTransport::url("backend"));  // messageport:backend
+auto* replica = node.acquireDynamic("counter");
+```
+
+and on the hosting side, unchanged but for the URL:
+
+```cpp
+QRemoteObjectHost host;
+host.setHostUrl(LogosMessagePortTransport::url("runtime"));
+host.enableRemoting(backend, "counter");
+```
+
+Three things about it are worth knowing before you use it:
+
+- **A port name is process-local, not a rendezvous.** `messageport:backend`
+  means "the port THIS process published as `backend`". A browser has no
+  directory to look one up in — you are handed a port or you have none — so the
+  two ends name their own halves and are free to use the same name.
+- **Delivery is off until `start()`.** Exactly as an HTML MessagePort's queue
+  is. `LogosMessagePortDevice` calls it when it attaches, which is what keeps
+  the object list a backend writes the instant it begins hosting from being
+  dropped on the floor by a runtime that has not connected yet.
+- **A runtime that starts before its backend just waits.** Connecting to a name
+  nothing has published yet is not an error; QtRO's reconnect timer retries
+  until the port appears.
+
+In the browser the page hands the port over through one embind call and never
+touches a Qt type:
+
+```js
+const channel = new MessageChannel();
+worker.postMessage({ logosPort: channel.port2 }, [channel.port2]);
+Module.logosAdoptMessagePort('backend', channel.port1);
+```
+
+The transport's behaviour is checked on the **desktop**, against a real
+`QRemoteObjectHost` over a loopback port pair with the same four properties a
+MessagePort has (`tests/test_messageport_transport.cpp`).
+
+What a desktop test cannot reach is `nix build .#messageport-wasm`: the
+transport compiled for wasm32-emscripten against logos-nix' Qt-for-WebAssembly,
+installed as a prefix, and linked off that prefix into **the runtime's shape** —
+Qt Quick plus the Logos design system plus this transport in one static image,
+which is ADR 0004's bundled QML runtime minus the module QML it will load at
+install time. The build asserts what a link cannot: that both halves of the
+page-facing embind API are in the image (nothing in C++ references them, so a
+linker is free to drop them), and that the design system's QML plugins are still
+in it (under a static Qt, Qt's own plugin auto-import and the design system's
+`WHOLE_ARCHIVE` umbrella compete for the same plugins and the loser is silent).
+
+Nothing in that build runs: a Qt-wasm image needs a canvas, a page and a peer.
+
 ## Building
 
 ### Nix (recommended)
@@ -117,8 +199,17 @@ nix build .#default
 
 Outputs:
 - `result/lib/liblogos_view_module_runtime.a`
+- `result/lib/liblogos_messageport.a`
 - `result/include/` — public headers
 - `result/bin/ui-host`
+
+The wasm subset — the MessagePort transport alone, against logos-nix'
+Qt-for-WebAssembly, plus a Qt Quick + design system image linking it
+(20,894,977 B on aarch64-darwin):
+
+```sh
+nix build .#messageport-wasm
+```
 
 ### CMake (manual)
 
@@ -132,9 +223,11 @@ cmake --install build --prefix ./out
 ```
 
 All three roots are required — the build stops with `FATAL_ERROR` if any is
-undefined. `LOGOS_CPP_SDK_ROOT` must point at an installed `logos-cpp-sdk`
-(provides `logos_api.h` and `liblogos_sdk`), `LOGOS_QT_HOST_ROOT` at
-`logos-qt-host`, and `LOGOS_PROTOCOL_ROOT` at `logos-protocol`.
+undefined, unless `-DLOGOS_MESSAGEPORT_ONLY=ON` is passed, which builds
+`logos_messageport` and stops there (this is what the wasm build does).
+`LOGOS_CPP_SDK_ROOT` must point at an installed `logos-cpp-sdk` (provides
+`logos_api.h` and `liblogos_sdk`), `LOGOS_QT_HOST_ROOT` at `logos-qt-host`, and
+`LOGOS_PROTOCOL_ROOT` at `logos-protocol`.
 
 ## Consuming from another repo
 
