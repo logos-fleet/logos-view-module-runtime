@@ -28,6 +28,16 @@ QUrl documentUrlFor(const QString& moduleName)
     return QUrl(QStringLiteral("qrc:/logos/modules/%1/Main.qml").arg(moduleName));
 }
 
+// A VIEW AND THE CONTEXT IT WAS CREATED IN, in this order and not by parenting
+// one to the other: a QML object is torn down against its context, so the
+// context has to outlive it by exactly that much. Both places that destroy a
+// view — removal and the runtime's own teardown — go through here.
+void destroyView(QObject* view, QQmlContext* context)
+{
+    delete view;
+    delete context;
+}
+
 } // namespace
 
 LogosWebRuntime::LogosWebRuntime(QQmlEngine* engine, QObject* parent)
@@ -62,10 +72,8 @@ LogosWebRuntime::LogosWebRuntime(QQmlEngine* engine, QObject* parent)
 // owes nothing to anyone.
 LogosWebRuntime::~LogosWebRuntime()
 {
-    for (auto it = m_views.begin(); it != m_views.end(); ++it) {
-        delete it->view;
-        delete it->context;
-    }
+    for (auto it = m_views.begin(); it != m_views.end(); ++it)
+        destroyView(it->view, it->context);
     m_views.clear();
     m_order.clear();
 
@@ -142,7 +150,7 @@ QObject* LogosWebRuntime::installModuleView(const QString& moduleName, const QSt
 
     // Adopted in this order, so that a runtime destroying its children tears
     // each view down before the context it was created in — the same ordering
-    // removeModuleView() spells out.
+    // destroyView() spells out.
     view->setParent(this);
     QQmlEngine::setObjectOwnership(view, QQmlEngine::CppOwnership);
     context->setParent(this);
@@ -166,11 +174,7 @@ bool LogosWebRuntime::removeModuleView(const QString& moduleName)
     QQmlContext* context = it->context;
     m_views.erase(it);
     m_order.removeAll(moduleName);
-    // In this order, and not by parenting one to the other: a QML object is
-    // torn down against the context it was created in, so the context has to
-    // outlive it by exactly that much.
-    delete view;
-    delete context;
+    destroyView(view, context);
 
     emit installedModulesChanged();
     return true;

@@ -129,7 +129,7 @@ bool LogosWebBridge::isViewModuleReady(const QString& moduleName) const
     return it.value()->state() == QRemoteObjectReplica::Valid;
 }
 
-void LogosWebBridge::replayModuleState()
+void LogosWebBridge::replayViewModuleState()
 {
     for (auto it = m_replicas.cbegin(); it != m_replicas.cend(); ++it) {
         if (it.value() && it.value()->state() == QRemoteObjectReplica::Valid)

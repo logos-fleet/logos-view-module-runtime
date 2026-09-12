@@ -220,42 +220,6 @@ void TestWebRuntime::reinstallingAModuleReplacesItsView()
     QCOMPARE(runtime.installedModules().count(), 1);
 }
 
-// THE ORDER, PINNED, because getting it wrong is invisible until it is not.
-//
-// ~QObject deletes children in the order they were ADDED, and the runtime adds
-// its QtRO node before its bridge — so the DEFAULT destructor takes the node
-// down first and the bridge's replicas, which are that node's clients and touch
-// its private on the way out, second. It does not crash every time: the freed
-// pages are usually still readable, so what it produced was an intermittent
-// SIGSEGV in this suite, around one run in six, in whichever test happened to
-// be last.
-//
-// Asserting the ORDER rather than the absence of a crash is the whole point —
-// "run it a hundred times and see" is not a test.
-void TestWebRuntime::theBridgeIsDestroyedBeforeTheNode()
-{
-    QQmlEngine engine;
-    auto* runtime = new LogosWebRuntime(&engine);
-
-    // A view and a replica, so the objects whose lifetime depends on the node
-    // actually exist when it goes. `module()` answers null until the backend's
-    // meta has arrived — there is no backend here — but the call is what
-    // CREATES the replica, which is the object this test is about.
-    QVERIFY(runtime->connectToBackend(name("teardown")));
-    QVERIFY(runtime->installModuleView(QStringLiteral("counter"), kCounterQml));
-    runtime->bridge()->module(QStringLiteral("counter"));
-
-    QStringList order;
-    connect(runtime->bridge(), &QObject::destroyed, this,
-            [&order]() { order.append(QStringLiteral("bridge")); });
-    connect(runtime->node(), &QObject::destroyed, this,
-            [&order]() { order.append(QStringLiteral("node")); });
-
-    delete runtime;
-
-    QCOMPARE(order, (QStringList{ QStringLiteral("bridge"), QStringLiteral("node") }));
-}
-
 void TestWebRuntime::aBindingFollowsTheBackendAndASlotDrivesIt()
 {
     QObject owner;
@@ -545,6 +509,42 @@ void TestWebRuntime::callModuleIsRefusedAndNamesCallModuleAsync()
     QVERIFY(obj.contains(QStringLiteral("error")));
     QVERIFY(obj.value(QStringLiteral("message")).toString().contains(
         QStringLiteral("callModuleAsync")));
+}
+
+// THE ORDER, PINNED, because getting it wrong is invisible until it is not.
+//
+// ~QObject deletes children in the order they were ADDED, and the runtime adds
+// its QtRO node before its bridge — so the DEFAULT destructor takes the node
+// down first and the bridge's replicas, which are that node's clients and touch
+// its private on the way out, second. It does not crash every time: the freed
+// pages are usually still readable, so what it produced was an intermittent
+// SIGSEGV in this suite, around one run in six, in whichever test happened to
+// be last.
+//
+// Asserting the ORDER rather than the absence of a crash is the whole point —
+// "run it a hundred times and see" is not a test.
+void TestWebRuntime::theBridgeIsDestroyedBeforeTheNode()
+{
+    QQmlEngine engine;
+    auto* runtime = new LogosWebRuntime(&engine);
+
+    // A view and a replica, so the objects whose lifetime depends on the node
+    // actually exist when it goes. `module()` answers null until the backend's
+    // meta has arrived — there is no backend here — but the call is what
+    // CREATES the replica, which is the object this test is about.
+    QVERIFY(runtime->connectToBackend(name("teardown")));
+    QVERIFY(runtime->installModuleView(QStringLiteral("counter"), kCounterQml));
+    runtime->bridge()->module(QStringLiteral("counter"));
+
+    QStringList order;
+    connect(runtime->bridge(), &QObject::destroyed, this,
+            [&order]() { order.append(QStringLiteral("bridge")); });
+    connect(runtime->node(), &QObject::destroyed, this,
+            [&order]() { order.append(QStringLiteral("node")); });
+
+    delete runtime;
+
+    QCOMPARE(order, (QStringList{ QStringLiteral("bridge"), QStringLiteral("node") }));
 }
 
 QTEST_GUILESS_MAIN(TestWebRuntime)

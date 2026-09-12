@@ -72,9 +72,10 @@ public:
 
     // Re-emit viewModuleReadyChanged for every replica already Valid. Replicas
     // outlive an engine; a view rebuilt against a fresh one would otherwise
-    // wait forever for an edge that already happened. Same contract as
-    // LogosQmlBridge::replayViewModuleState().
-    void replayModuleState();
+    // wait forever for an edge that already happened. Same contract AND the
+    // same name as LogosQmlBridge::replayViewModuleState(), so a host that
+    // rebuilds a view tree calls one thing in either container.
+    void replayViewModuleState();
 
     // ── backend modules: a call over the host's router ──────────────────
 
