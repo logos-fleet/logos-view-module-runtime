@@ -46,7 +46,36 @@ LogosWebRuntime::LogosWebRuntime(QQmlEngine* engine, QObject* parent)
     }
 }
 
-LogosWebRuntime::~LogosWebRuntime() = default;
+// TEARDOWN ORDER, BECAUSE QObject'S DEFAULT IS THE WRONG ONE HERE.
+//
+// ~QObject deletes children in the order they were ADDED, and the constructor
+// above adds the node before the bridge — so the default destructor deletes the
+// QtRO node first and the bridge's replicas second. A replica is the node's
+// client: it holds the node's private and unregisters itself on the way out, so
+// destroying the node first is a use-after-free. It does not fail every time
+// (the freed pages are usually still readable), which is exactly why it showed
+// up as an INTERMITTENT SIGSEGV — around one run in six of this repo's own
+// WebRuntimeTests, in whichever test function happened to be last.
+//
+// The order below is the dependency order, innermost first: a module's view
+// holds bindings onto a replica, a replica belongs to the node, and the node
+// owes nothing to anyone.
+LogosWebRuntime::~LogosWebRuntime()
+{
+    for (auto it = m_views.begin(); it != m_views.end(); ++it) {
+        delete it->view;
+        delete it->context;
+    }
+    m_views.clear();
+    m_order.clear();
+
+    // Both are children of this object, so deleting them here also removes
+    // them from the child list — ~QObject will not see them again.
+    delete m_bridge;
+    m_bridge = nullptr;
+    delete m_node;
+    m_node = nullptr;
+}
 
 bool LogosWebRuntime::connectToBackend(const QString& portName)
 {

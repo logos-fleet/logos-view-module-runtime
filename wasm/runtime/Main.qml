@@ -45,8 +45,21 @@ Window {
             root.failure = ""
             // The module's root is an Item; the runtime created it but never
             // decided where it goes, which is this file's job.
-            if (view && view.hasOwnProperty("parent"))
-                view.parent = stage
+            if (!view || !view.hasOwnProperty("parent"))
+                return
+            view.parent = stage
+
+            // AND HOW BIG IT IS. A document created with QQmlComponent has no
+            // anchors to the thing it is reparented into, so a module's root
+            // arrives 0x0 — it renders, it just renders nothing, and every
+            // symptom (an empty stage, a button at 0,0, a ColumnLayout centred
+            // in nothing) looks like the QML being wrong rather than unsized.
+            // Bindings, not assignments: the stage follows the window and a
+            // browser window is resized by its user.
+            if (view.hasOwnProperty("width"))
+                view.width = Qt.binding(function () { return stage.width })
+            if (view.hasOwnProperty("height"))
+                view.height = Qt.binding(function () { return stage.height })
         }
 
         function onModuleViewFailed(moduleName, error) {

@@ -77,7 +77,7 @@ QRemoteObjectDynamicReplica* LogosWebBridge::replicaFor(const QString& moduleNam
                          QRemoteObjectReplica::State /*old*/) {
                 if (!self)
                     return;
-                emit self->moduleReadyChanged(name, newState == QRemoteObjectReplica::Valid);
+                emit self->viewModuleReadyChanged(name, newState == QRemoteObjectReplica::Valid);
             });
     return replica;
 }
@@ -103,7 +103,7 @@ QObject* LogosWebBridge::module(const QString& moduleName)
     //
     //     property var backend: null
     //     Component.onCompleted: {
-    //         logos.moduleReadyChanged.connect(function (name, ready) {
+    //         logos.viewModuleReadyChanged.connect(function (name, ready) {
     //             if (name === "counter" && ready) root.backend = logos.module(name)
     //         })
     //         root.backend = logos.module("counter")   // starts the acquire
@@ -121,7 +121,7 @@ QObject* LogosWebBridge::module(const QString& moduleName)
     return replica;
 }
 
-bool LogosWebBridge::isModuleReady(const QString& moduleName) const
+bool LogosWebBridge::isViewModuleReady(const QString& moduleName) const
 {
     auto it = m_replicas.constFind(moduleName);
     if (it == m_replicas.cend() || !it.value())
@@ -133,7 +133,7 @@ void LogosWebBridge::replayModuleState()
 {
     for (auto it = m_replicas.cbegin(); it != m_replicas.cend(); ++it) {
         if (it.value() && it.value()->state() == QRemoteObjectReplica::Valid)
-            emit moduleReadyChanged(it.key(), true);
+            emit viewModuleReadyChanged(it.key(), true);
     }
 }
 

@@ -59,16 +59,18 @@ public:
     // The replica for a module's backend — and NULL until that backend is
     // there. Calling it early is how the acquire starts, so a view calls it
     // from Component.onCompleted and takes the answer again on
-    // moduleReadyChanged. The long version of why is on the implementation;
+    // viewModuleReadyChanged. The long version of why is on the implementation;
     // the short version is that Qt's QML engine caches a property cache for an
     // object the first time it sees it, and a dynamic replica does not have its
     // real metaobject yet. Cached, so two views of one module share one
     // replica.
     Q_INVOKABLE QObject* module(const QString& moduleName);
 
-    Q_INVOKABLE bool isModuleReady(const QString& moduleName) const;
+    // Also LogosQmlBridge's name, for the same reason the signal below shares
+    // one: a module's QML asks the same question of both containers.
+    Q_INVOKABLE bool isViewModuleReady(const QString& moduleName) const;
 
-    // Re-emit moduleReadyChanged for every replica already Valid. Replicas
+    // Re-emit viewModuleReadyChanged for every replica already Valid. Replicas
     // outlive an engine; a view rebuilt against a fresh one would otherwise
     // wait forever for an edge that already happened. Same contract as
     // LogosQmlBridge::replayViewModuleState().
@@ -107,7 +109,12 @@ public:
     Q_INVOKABLE QStringList pendingCallIds() const;
 
 Q_SIGNALS:
-    void moduleReadyChanged(const QString& moduleName, bool ready);
+    // THE SAME NAME LogosQmlBridge USES, and that is the point: a module's QML
+    // takes its backend on this edge in BOTH containers, so one document runs
+    // on the desktop and inside the Web container without knowing which it is
+    // in. Two spellings of one edge would make the container an author's
+    // problem, which is exactly what ADR 0004 is trying to avoid.
+    void viewModuleReadyChanged(const QString& moduleName, bool ready);
 
 private Q_SLOTS:
     // A SLOT, and it has to be: the router is a DYNAMIC replica, so its
