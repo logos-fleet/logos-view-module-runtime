@@ -87,7 +87,7 @@ private:
 // exist until the source's meta arrives over the wire. A binding written
 // against `backend.value` before that registers a dependency on nothing —
 // there is no `value` yet to depend on — and would never re-run. So a view
-// re-takes the replica on moduleReadyChanged, and only THEN is its binding
+// re-takes the replica on viewModuleReadyChanged, and only THEN is its binding
 // bound to a real property with a real NOTIFY. Everything after that is
 // ordinary QML, which is what the increments below check.
 const char* kCounterQml = R"QML(
@@ -101,7 +101,7 @@ QtObject {
     function press() { if (backend) backend.increment() }
 
     Component.onCompleted: {
-        logos.moduleReadyChanged.connect(function (name, ready) {
+        logos.viewModuleReadyChanged.connect(function (name, ready) {
             if (name !== "counter" || !ready) return
             root.backend = logos.module(name)
         })
@@ -120,7 +120,7 @@ QtObject {
     function say(who) { if (backend) backend.greet(who) }
 
     Component.onCompleted: {
-        logos.moduleReadyChanged.connect(function (name, ready) {
+        logos.viewModuleReadyChanged.connect(function (name, ready) {
             if (name !== "greeter" || !ready) return
             root.backend = logos.module(name)
         })
@@ -154,6 +154,9 @@ private Q_SLOTS:
     void aCallMadeBeforeTheBackendIsThereStillLands();
     void callModuleAsyncTimesOutWithAnErrorPayload();
     void callModuleIsRefusedAndNamesCallModuleAsync();
+
+    // ── teardown ────────────────────────────────────────────────────────
+    void theBridgeIsDestroyedBeforeTheNode();
 
 private:
     QString name(const char* role) const
@@ -242,7 +245,7 @@ void TestWebRuntime::aBindingFollowsTheBackendAndASlotDrivesIt()
 
     // ...and then the source's meta arrives and the view shows the backend.
     QTRY_COMPARE(view->property("shown").toInt(), 0);
-    QVERIFY(runtime.bridge()->isModuleReady(QStringLiteral("counter")));
+    QVERIFY(runtime.bridge()->isViewModuleReady(QStringLiteral("counter")));
 
     // THE BUTTON. A slot invoked from the module's own QML drives the backend...
     QVERIFY(QMetaObject::invokeMethod(view, "press"));
@@ -325,7 +328,7 @@ QtObject {
     }
 
     Component.onCompleted: {
-        logos.moduleReadyChanged.connect(function (name, ready) {
+        logos.viewModuleReadyChanged.connect(function (name, ready) {
             if (name !== "counter" || !ready) return
             root.backend = logos.module(name)
         })
@@ -336,7 +339,7 @@ QtObject {
 
     QObject* view = runtime.installModuleView(QStringLiteral("counter"), QString::fromUtf8(qml));
     QVERIFY(view);
-    QTRY_VERIFY(runtime.bridge()->isModuleReady(QStringLiteral("counter")));
+    QTRY_VERIFY(runtime.bridge()->isViewModuleReady(QStringLiteral("counter")));
 
     QVERIFY(QMetaObject::invokeMethod(view, "ask"));
     QTRY_COMPARE(view->property("answer").toInt(), 5);
@@ -506,6 +509,42 @@ void TestWebRuntime::callModuleIsRefusedAndNamesCallModuleAsync()
     QVERIFY(obj.contains(QStringLiteral("error")));
     QVERIFY(obj.value(QStringLiteral("message")).toString().contains(
         QStringLiteral("callModuleAsync")));
+}
+
+// THE ORDER, PINNED, because getting it wrong is invisible until it is not.
+//
+// ~QObject deletes children in the order they were ADDED, and the runtime adds
+// its QtRO node before its bridge — so the DEFAULT destructor takes the node
+// down first and the bridge's replicas, which are that node's clients and touch
+// its private on the way out, second. It does not crash every time: the freed
+// pages are usually still readable, so what it produced was an intermittent
+// SIGSEGV in this suite, around one run in six, in whichever test happened to
+// be last.
+//
+// Asserting the ORDER rather than the absence of a crash is the whole point —
+// "run it a hundred times and see" is not a test.
+void TestWebRuntime::theBridgeIsDestroyedBeforeTheNode()
+{
+    QQmlEngine engine;
+    auto* runtime = new LogosWebRuntime(&engine);
+
+    // A view and a replica, so the objects whose lifetime depends on the node
+    // actually exist when it goes. `module()` answers null until the backend's
+    // meta has arrived — there is no backend here — but the call is what
+    // CREATES the replica, which is the object this test is about.
+    QVERIFY(runtime->connectToBackend(name("teardown")));
+    QVERIFY(runtime->installModuleView(QStringLiteral("counter"), kCounterQml));
+    runtime->bridge()->module(QStringLiteral("counter"));
+
+    QStringList order;
+    connect(runtime->bridge(), &QObject::destroyed, this,
+            [&order]() { order.append(QStringLiteral("bridge")); });
+    connect(runtime->node(), &QObject::destroyed, this,
+            [&order]() { order.append(QStringLiteral("node")); });
+
+    delete runtime;
+
+    QCOMPARE(order, (QStringList{ QStringLiteral("bridge"), QStringLiteral("node") }));
 }
 
 QTEST_GUILESS_MAIN(TestWebRuntime)

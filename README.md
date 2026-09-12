@@ -221,15 +221,20 @@ Module.logosInstallModuleView('counter', await (await fetch(qmlUrl)).text());
 
 ### The one way a module's QML differs from the desktop
 
+It is one difference and not two: the NAMES are the desktop's.
+`viewModuleReadyChanged` and `isViewModuleReady` are spelled exactly as
+`LogosQmlBridge` spells them, so a module's document is the same file in both
+containers. What differs is only WHEN the backend arrives.
+
 `logos.module(name)` **answers null until the backend is there**, and a view
-takes it again on `moduleReadyChanged`:
+takes it again on `viewModuleReadyChanged`:
 
 ```qml
 property var backend: null
 property int shown: (backend && backend.value !== undefined) ? backend.value : -1
 
 Component.onCompleted: {
-    logos.moduleReadyChanged.connect(function (name, ready) {
+    logos.viewModuleReadyChanged.connect(function (name, ready) {
         if (name === "counter" && ready) backend = logos.module(name)
     })
     backend = logos.module("counter")     // the early call is what starts the acquire
