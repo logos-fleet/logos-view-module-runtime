@@ -143,6 +143,9 @@ private Q_SLOTS:
     void aModulesQmlIsCompiledIntoTheOneEngine();
     void qmlThatDoesNotCompileIsReportedNotSilentlyDropped();
     void reinstallingAModuleReplacesItsView();
+    void anItemIsFoundByObjectNameAndMeasuredInWindowCoordinates();
+    void anItemThatIsNotThereIsSaidToBeNotThere();
+    void aPasswordFieldPublishesItsLengthAndNotItsContents();
 
     // ── the module's own backend, over the replica ──────────────────────
     void aBindingFollowsTheBackendAndASlotDrivesIt();
@@ -218,6 +221,112 @@ void TestWebRuntime::reinstallingAModuleReplacesItsView()
     QVERIFY(second != first);
     QTRY_VERIFY(watched.isNull());
     QCOMPARE(runtime.installedModules().count(), 1);
+}
+
+// ── driving a scene the page cannot see (logos-workspace#174) ───────────────
+//
+// A view whose items carry the three things describeItem reads: an objectName,
+// a position and a size, and a parent to sum them up. QtQml rather than Quick
+// for the reason the whole test is: the runtime owns the wire, not the scene,
+// and it reads every one of these through the metaobject -- which is what lets
+// it answer for a Qt Quick Item without linking Qt Quick.
+const char* kFormQml = R"QML(
+import QtQml
+QtObject {
+    id: root
+    objectName: "walletRoot"
+    property real x: 0
+    property real y: 0
+    property real width: 460
+    property real height: 760
+    property QtObject label: QtObject {
+        objectName: "advAcctLabelField"
+        property QtObject parent: root
+        property real x: 24
+        property real y: 271
+        property real width: 444
+        property real height: 46
+        property string text: "issue174"
+        property int echoMode: 0
+    }
+    property QtObject passphrase: QtObject {
+        objectName: "advAcctPwField"
+        property QtObject parent: root
+        property real x: 24
+        property real y: 319
+        property real width: 444
+        property real height: 46
+        property string text: "hunter2"
+        property int echoMode: 2
+    }
+}
+)QML";
+
+void TestWebRuntime::anItemIsFoundByObjectNameAndMeasuredInWindowCoordinates()
+{
+    QQmlEngine engine;
+    LogosWebRuntime runtime(&engine);
+    QVERIFY(runtime.installModuleView(QStringLiteral("wallet_ui"),
+                                      QString::fromUtf8(kFormQml)));
+
+    const QJsonObject item = QJsonDocument::fromJson(
+        runtime.describeItem(QStringLiteral("wallet_ui"),
+                             QStringLiteral("advAcctLabelField")).toUtf8()).object();
+    QVERIFY(item.value(QStringLiteral("found")).toBool());
+    // SUMMED UP THE PARENT CHAIN: the field's own 24,271 plus the root's 0,0.
+    // A press is dispatched at the window, so the window is what the answer has
+    // to be in.
+    QCOMPARE(item.value(QStringLiteral("x")).toDouble(), 24.0);
+    QCOMPARE(item.value(QStringLiteral("y")).toDouble(), 271.0);
+    QCOMPARE(item.value(QStringLiteral("width")).toDouble(), 444.0);
+    QCOMPARE(item.value(QStringLiteral("height")).toDouble(), 46.0);
+    // ...and what it HOLDS, which is the half a rect cannot answer: it is how a
+    // driver tells "the keys reached the field" from "the driver dispatched
+    // some events".
+    QCOMPARE(item.value(QStringLiteral("text")).toString(), QStringLiteral("issue174"));
+
+    // The view's own root answers for itself rather than only its children.
+    const QJsonObject root = QJsonDocument::fromJson(
+        runtime.describeItem(QStringLiteral("wallet_ui"),
+                             QStringLiteral("walletRoot")).toUtf8()).object();
+    QVERIFY(root.value(QStringLiteral("found")).toBool());
+    QCOMPARE(root.value(QStringLiteral("width")).toDouble(), 460.0);
+}
+
+void TestWebRuntime::anItemThatIsNotThereIsSaidToBeNotThere()
+{
+    QQmlEngine engine;
+    LogosWebRuntime runtime(&engine);
+    QVERIFY(runtime.installModuleView(QStringLiteral("wallet_ui"),
+                                      QString::fromUtf8(kFormQml)));
+
+    // A handle no item carries, and a module that is not installed, are the
+    // same answer: a driver that cannot tell them apart from a crash would
+    // report a page that never came up as a page with a missing field.
+    for (const auto& ask : { std::pair{ QStringLiteral("wallet_ui"), QStringLiteral("nope") },
+                             std::pair{ QStringLiteral("no_such_module"),
+                                        QStringLiteral("advAcctLabelField") } }) {
+        const QJsonObject answer = QJsonDocument::fromJson(
+            runtime.describeItem(ask.first, ask.second).toUtf8()).object();
+        QVERIFY(!answer.value(QStringLiteral("found")).toBool());
+    }
+}
+
+void TestWebRuntime::aPasswordFieldPublishesItsLengthAndNotItsContents()
+{
+    QQmlEngine engine;
+    LogosWebRuntime runtime(&engine);
+    QVERIFY(runtime.installModuleView(QStringLiteral("wallet_ui"),
+                                      QString::fromUtf8(kFormQml)));
+
+    // This answer crosses to a page, and from a page to a device console and
+    // off the device with it. The LENGTH is enough to say the keys arrived.
+    const QJsonObject item = QJsonDocument::fromJson(
+        runtime.describeItem(QStringLiteral("wallet_ui"),
+                             QStringLiteral("advAcctPwField")).toUtf8()).object();
+    QVERIFY(item.value(QStringLiteral("found")).toBool());
+    QCOMPARE(item.value(QStringLiteral("text")).toString(),
+             QStringLiteral("7 character(s)"));
 }
 
 void TestWebRuntime::aBindingFollowsTheBackendAndASlotDrivesIt()

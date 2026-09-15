@@ -71,6 +71,20 @@ bool logosConnectBackend(std::string portName)
     return g_runtime && g_runtime->connectToBackend(QString::fromStdString(portName));
 }
 
+// WHERE ONE ITEM OF A MODULE'S VIEW IS, AND WHAT IT HOLDS, as JSON. The page's
+// only handle on a scene it cannot see: a `web` variant draws into a canvas, so
+// a host driving a module's form has no DOM node to press and no text node to
+// read back (logos-workspace#174). Items are named by `objectName`, the handle
+// every Logos view already carries for UI automation. Read-only -- see
+// LogosWebRuntime::describeItem for why a page may ask and may not set.
+std::string logosViewItem(std::string moduleName, std::string handle)
+{
+    if (!g_runtime)
+        return "{\"found\":false}";
+    return g_runtime->describeItem(QString::fromStdString(moduleName),
+                                   QString::fromStdString(handle)).toStdString();
+}
+
 // Why the last install failed, for a page that wants to say so rather than show
 // a blank rectangle.
 std::string logosRuntimeLastError()
@@ -86,6 +100,7 @@ EMSCRIPTEN_BINDINGS(logos_qml_runtime)
     emscripten::function("logosRemoveModuleView", &logosRemoveModuleView);
     emscripten::function("logosConnectBackend", &logosConnectBackend);
     emscripten::function("logosRuntimeLastError", &logosRuntimeLastError);
+    emscripten::function("logosViewItem", &logosViewItem);
 }
 
 #endif // __EMSCRIPTEN__

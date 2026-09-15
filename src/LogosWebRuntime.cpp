@@ -3,6 +3,8 @@
 #include "LogosMessagePortTransport.h"
 #include "LogosWebBridge.h"
 
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLoggingCategory>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -189,6 +191,47 @@ QObject* LogosWebRuntime::moduleView(const QString& moduleName) const
 QStringList LogosWebRuntime::installedModules() const
 {
     return m_order;
+}
+
+QString LogosWebRuntime::describeItem(const QString& moduleName, const QString& handle) const
+{
+    QObject* view = moduleView(moduleName);
+    QObject* item = nullptr;
+    if (view)
+        item = view->objectName() == handle ? view
+                                            : view->findChild<QObject*>(handle);
+    if (!item)
+        return QStringLiteral("{\"found\":false}");
+
+    // UP THE PARENT CHAIN, summing x and y. It is the whole of the mapping this
+    // needs and it needs no Qt Quick: an item's position is its parent's plus
+    // its own, a scrolled Flickable's content item carries the scroll as a
+    // negative y, and the top of the chain is the scene. Reading `parent`
+    // through the metaobject rather than QQuickItem::parentItem() is what keeps
+    // this class Qml-only -- see the class comment: it owns the wire and the
+    // engine's view of it, never the scene.
+    double x = 0, y = 0;
+    for (const QObject* node = item; node; node = node->property("parent").value<QObject*>()) {
+        x += node->property("x").toDouble();
+        y += node->property("y").toDouble();
+    }
+
+    QJsonObject out;
+    out.insert(QStringLiteral("found"), true);
+    out.insert(QStringLiteral("x"), x);
+    out.insert(QStringLiteral("y"), y);
+    out.insert(QStringLiteral("width"), item->property("width").toDouble());
+    out.insert(QStringLiteral("height"), item->property("height").toDouble());
+    const QVariant text = item->property("text");
+    if (text.isValid())
+        out.insert(QStringLiteral("text"), text.toString());
+    // A password field's contents are not published: this answer crosses to a
+    // page, and from there to a device console and off the device with it.
+    const QVariant echo = item->property("echoMode");
+    if (echo.isValid() && echo.toInt() != 0)
+        out.insert(QStringLiteral("text"), QStringLiteral("%1 character(s)")
+                                               .arg(text.toString().size()));
+    return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact));
 }
 
 QString LogosWebRuntime::lastError() const

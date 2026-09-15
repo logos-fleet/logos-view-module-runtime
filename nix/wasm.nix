@@ -98,9 +98,11 @@ pkgs.stdenv.mkDerivation {
     #   logosAdoptMessagePort / logosMessagePortDeliver  the wire (the transport)
     #   logosInstallModuleView / logosRemoveModuleView   a module's QML
     #   logosConnectBackend / logosRuntimeLastError      the rest of the page API
+    #   logosViewItem                                    where an item is, for
+    #                                                    a host driving the scene
     for symbol in logosAdoptMessagePort logosMessagePortDeliver \
                   logosInstallModuleView logosRemoveModuleView \
-                  logosConnectBackend logosRuntimeLastError; do
+                  logosConnectBackend logosRuntimeLastError logosViewItem; do
       grep -a -q "$symbol" "$glue" "$image" || {
         echo "the image does not export $symbol: the translation unit carrying" >&2
         echo "  it was dropped from the link (embind registrations live in an" >&2
