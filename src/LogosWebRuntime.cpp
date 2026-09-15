@@ -222,15 +222,17 @@ QString LogosWebRuntime::describeItem(const QString& moduleName, const QString& 
     out.insert(QStringLiteral("y"), y);
     out.insert(QStringLiteral("width"), item->property("width").toDouble());
     out.insert(QStringLiteral("height"), item->property("height").toDouble());
+    // What the item HOLDS -- except for a password field, whose contents are not
+    // published: this answer crosses to a page, and from there to a device
+    // console and off the device with it. Its length is enough to say the keys
+    // arrived. (echoMode is TextInput's, where anything but Normal is masked.)
     const QVariant text = item->property("text");
-    if (text.isValid())
-        out.insert(QStringLiteral("text"), text.toString());
-    // A password field's contents are not published: this answer crosses to a
-    // page, and from there to a device console and off the device with it.
     const QVariant echo = item->property("echoMode");
     if (echo.isValid() && echo.toInt() != 0)
         out.insert(QStringLiteral("text"), QStringLiteral("%1 character(s)")
                                                .arg(text.toString().size()));
+    else if (text.isValid())
+        out.insert(QStringLiteral("text"), text.toString());
     return QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact));
 }
 
