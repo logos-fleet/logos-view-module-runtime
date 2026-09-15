@@ -78,6 +78,35 @@ public:
 
     QStringList installedModules() const;
 
+    // WHERE ONE ITEM OF A MODULE'S VIEW IS, AND WHAT IT HOLDS -- as JSON, for a
+    // page that has to drive the scene it cannot see.
+    //
+    // A `web` variant's UI is pixels in a canvas: a host that wants to press a
+    // module's field or read what it now says has no DOM node to touch and no
+    // text node to read (logos-workspace#174). Qt's own accessibility tree
+    // answers half of it -- it carries rects, and names for buttons -- but it
+    // publishes a text editor with no name at all, so the one control a typed
+    // flow is about is the one thing that cannot be asked for by name.
+    //
+    // `handle` is the item's `objectName`, which is the handle every Logos view
+    // already carries for UI automation (the desktop inspector finds items the
+    // same way, and nothing on the QML side has to know about this). Answers:
+    //
+    //     {"found":true,"x":24,"y":271,"width":444,"height":46,"text":"main"}
+    //     {"found":false}
+    //
+    // x and y are the item's top-left in the WINDOW's coordinates -- summed up
+    // the parent chain, so a scrolled Flickable's offset is already in them,
+    // which is what a press dispatched at the canvas needs. `text` is the
+    // item's `text` property when it has one, which for a field is what the
+    // keys put in it.
+    //
+    // READ-ONLY, deliberately. A page may ask where a control is and what it
+    // says; it may not set anything -- the far side of this is a document, and
+    // driving a view has to go through the events a finger and a keyboard would
+    // send, or it proves nothing about the module (ADR 0005).
+    Q_INVOKABLE QString describeItem(const QString& moduleName, const QString& handle) const;
+
     // The last compile error, for a page that wants to print it. Cleared by a
     // successful install.
     Q_INVOKABLE QString lastError() const;
